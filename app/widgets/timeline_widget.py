@@ -14,13 +14,21 @@ class TimelineWidget(QWidget):
         self._plan = None
         self._selected_index = None
         self._playhead_source_ms = 0
-        self.setMinimumHeight(92)
+        self._mark_in_ms = None
+        self._mark_out_ms = None
+        self._zoom_factor = 1
+        self._base_width = 1080
+        self.setFixedHeight(104)
+        self.setMinimumWidth(self._base_width)
         self.setMouseTracking(True)
 
     def set_plan(self, plan):
         self._plan = validate_edit_plan(plan)
         self._selected_index = None
-        self._playhead_source_ms = 0
+        self._playhead_source_ms = min(
+            self._playhead_source_ms,
+            self._plan["source_duration_ms"],
+        )
         self.update()
 
     def set_playhead_source_ms(self, value):
@@ -31,6 +39,26 @@ class TimelineWidget(QWidget):
         self._playhead_source_ms = max(0, min(int(value), duration))
         self.update()
 
+    def set_markers(self, mark_in_ms=None, mark_out_ms=None):
+        self._mark_in_ms = (
+            None if mark_in_ms is None else int(mark_in_ms)
+        )
+        self._mark_out_ms = (
+            None if mark_out_ms is None else int(mark_out_ms)
+        )
+        self.update()
+
+    def set_zoom_factor(self, factor):
+        factor = max(1, min(int(factor), 8))
+        self._zoom_factor = factor
+        self.setMinimumWidth(self._base_width * factor)
+        self.resize(
+            self.minimumWidth(),
+            self.height(),
+        )
+        self.updateGeometry()
+        self.update()
+
     def selected_index(self):
         return self._selected_index
 
@@ -38,7 +66,7 @@ class TimelineWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        area = self.rect().adjusted(12, 20, -12, -24)
+        area = self.rect().adjusted(12, 22, -12, -28)
         painter.fillRect(area, QColor("#20242b"))
 
         if self._plan is None:
@@ -60,47 +88,78 @@ class TimelineWidget(QWidget):
 
             x = area.left() + area.width() * start_ratio
             width = max(1.0, area.width() * (end_ratio - start_ratio))
-
             rect = QRectF(x, area.top(), width, area.height())
 
-            if segment["action"] == "remove":
-                fill = QColor("#d95d5d")
-            else:
-                fill = QColor("#4aa889")
-
+            fill = (
+                QColor("#d95d5d")
+                if segment["action"] == "remove"
+                else QColor("#4aa889")
+            )
             painter.fillRect(rect, fill)
 
             if index == self._selected_index:
                 painter.setPen(QPen(QColor("#ffffff"), 2))
                 painter.drawRect(rect)
 
+        self._draw_marker(
+            painter,
+            area,
+            duration,
+            self._mark_in_ms,
+            QColor("#52a8ff"),
+            "IN",
+        )
+        self._draw_marker(
+            painter,
+            area,
+            duration,
+            self._mark_out_ms,
+            QColor("#f4c95d"),
+            "OUT",
+        )
+
         playhead_ratio = self._playhead_source_ms / duration
         playhead_x = area.left() + area.width() * playhead_ratio
         painter.setPen(QPen(QColor("#ffffff"), 2))
         painter.drawLine(
             int(playhead_x),
-            area.top() - 6,
+            area.top() - 8,
             int(playhead_x),
-            area.bottom() + 6,
+            area.bottom() + 8,
         )
 
         painter.setPen(QColor("#9aa4b2"))
+        painter.drawText(area.left(), self.height() - 8, "0:00")
         painter.drawText(
-            area.left(),
-            self.height() - 6,
-            "0:00",
+            area.right() - 54,
+            self.height() - 8,
+            self._format_ms(duration),
+        )
+
+    def _draw_marker(self, painter, area, duration, value, color, label):
+        if value is None:
+            return
+
+        ratio = max(0.0, min(1.0, value / duration))
+        x = area.left() + area.width() * ratio
+        painter.setPen(QPen(color, 2))
+        painter.drawLine(
+            int(x),
+            area.top() - 12,
+            int(x),
+            area.bottom() + 12,
         )
         painter.drawText(
-            area.right() - 44,
-            self.height() - 6,
-            self._format_ms(duration),
+            int(x) + 3,
+            area.top() - 4,
+            label,
         )
 
     def mousePressEvent(self, event):
         if self._plan is None:
             return
 
-        area = self.rect().adjusted(12, 20, -12, -24)
+        area = self.rect().adjusted(12, 22, -12, -28)
         if not area.contains(event.position().toPoint()):
             return
 

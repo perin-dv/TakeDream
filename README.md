@@ -123,6 +123,30 @@ O export final sempre usa o vídeo original e o plano de edição atual. Se a re
 escolhida for maior que a origem, o TakeDream mantém a resolução original em vez de
 fazer upscale artificial.
 
+## Timeline V2: edição manual
+
+A tela de revisão agora funciona também como um editor manual básico sobre o
+`edit_plan.json`.
+
+Recursos:
+
+- player interno;
+- zoom horizontal de 1x a 8x;
+- scroll horizontal quando a timeline está ampliada;
+- atalhos `I` e `O` para marcar entrada/saída;
+- criação de corte manual entre IN/OUT;
+- ajuste do início/fim de um corte selecionado em passos de 100 ms;
+- restauração de cortes removidos;
+- `Ctrl+Z` / `Ctrl+Y`;
+- regeneração de prévia antes da exportação.
+
+Enquanto existem alterações pendentes, o player da prévia antiga e a exportação
+ficam bloqueados para evitar comparar/exportar uma timeline diferente do MP4 em
+disco. Depois de **SALVAR E GERAR NOVA PRÉVIA**, o plano revisado vira a nova base.
+
+Esta versão ainda não possui handles arrastáveis, waveform, thumbnails ou múltiplas
+faixas. Esses itens permanecem planejados para etapas posteriores.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.

@@ -8,6 +8,8 @@ from core.review_pipeline import ReviewRenderPipeline
 from core.storage import write_json
 from editor.edit_plan import build_edit_plan
 from editor.review import (
+    add_manual_cut,
+    adjust_cut,
     edited_to_source_ms,
     restore_cut,
     source_to_edited_ms,
@@ -74,6 +76,109 @@ class ReviewPlanTests(unittest.TestCase):
             mapped_source,
             remove["end_ms"],
         )
+
+    def test_manual_cut_splits_keep_segment_and_updates_stats(self):
+        base = build_edit_plan(
+            5000,
+            "YouTube",
+            "Clean",
+            {"silences": []},
+        )
+
+        updated = add_manual_cut(base, 1200, 1800)
+
+        self.assertEqual(updated["stats"]["cuts"], 1)
+        self.assertEqual(updated["stats"]["removed_duration_ms"], 600)
+        self.assertEqual(updated["stats"]["estimated_duration_ms"], 4400)
+
+        removed = [
+            segment
+            for segment in updated["segments"]
+            if segment["action"] == "remove"
+        ]
+        self.assertEqual(len(removed), 1)
+        self.assertEqual(removed[0]["start_ms"], 1200)
+        self.assertEqual(removed[0]["end_ms"], 1800)
+        self.assertEqual(removed[0]["reason"], "manual_cut")
+
+    def test_manual_cut_normalizes_reversed_marks(self):
+        base = build_edit_plan(
+            3000,
+            "YouTube",
+            "Clean",
+            {"silences": []},
+        )
+
+        updated = add_manual_cut(base, 1800, 1200)
+        removed = next(
+            segment
+            for segment in updated["segments"]
+            if segment["action"] == "remove"
+        )
+
+        self.assertEqual(
+            (removed["start_ms"], removed["end_ms"]),
+            (1200, 1800),
+        )
+
+    def test_adjust_cut_moves_selected_boundaries(self):
+        remove_index = next(
+            index
+            for index, segment in enumerate(self.plan["segments"])
+            if segment["action"] == "remove"
+        )
+        original = self.plan["segments"][remove_index]
+
+        updated = adjust_cut(
+            self.plan,
+            remove_index,
+            start_delta_ms=-100,
+            end_delta_ms=100,
+        )
+
+        removed = [
+            segment
+            for segment in updated["segments"]
+            if segment["action"] == "remove"
+        ]
+
+        self.assertEqual(len(removed), 1)
+        self.assertEqual(
+            removed[0]["start_ms"],
+            original["start_ms"] - 100,
+        )
+        self.assertEqual(
+            removed[0]["end_ms"],
+            original["end_ms"] + 100,
+        )
+
+    def test_adjust_cut_rejects_inverted_range(self):
+        base = build_edit_plan(
+            2000,
+            "YouTube",
+            "Dinâmico",
+            {
+                "silences": [
+                    {
+                        "start_ms": 500,
+                        "end_ms": 1400,
+                        "duration_ms": 900,
+                    }
+                ]
+            },
+        )
+        remove_index = next(
+            index
+            for index, segment in enumerate(base["segments"])
+            if segment["action"] == "remove"
+        )
+
+        with self.assertRaises(ValueError):
+            adjust_cut(
+                base,
+                remove_index,
+                start_delta_ms=1000,
+            )
 
     def test_export_profiles(self):
         self.assertIsNone(get_export_profile("original").height)
