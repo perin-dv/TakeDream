@@ -95,6 +95,9 @@ class ReviewWindow(QMainWindow):
         player_controls.addWidget(self.position_slider, 1)
         player_controls.addWidget(self.time_label)
 
+        self.summary_label = QLabel()
+        self.summary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         legend = QLabel(
             "Linha do tempo do original: verde = mantido • vermelho = corte automático. "
             "Clique em um corte vermelho para restaurá-lo."
@@ -167,6 +170,7 @@ class ReviewWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(self.video_widget, 1)
         layout.addLayout(player_controls)
+        layout.addWidget(self.summary_label)
         layout.addWidget(legend)
         layout.addWidget(self.timeline)
         layout.addWidget(self.selection_label)
@@ -295,6 +299,11 @@ class ReviewWindow(QMainWindow):
         self.setWindowTitle(
             f"TakeDream — Revisão — {self.project_data['name']} • "
             f"{stats['cuts']} cortes"
+        )
+        self.summary_label.setText(
+            f"{stats['cuts']} cortes • "
+            f"{self._format_ms(stats['removed_duration_ms'])} removidos • "
+            f"{self._format_ms(stats['estimated_duration_ms'])} estimados"
         )
 
     def _start_worker(self, mode):
