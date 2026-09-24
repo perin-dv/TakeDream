@@ -130,7 +130,20 @@ class AutoEditPipeline:
         if plan is None:
             stage("Gerando plano de edição...")
             progress(10)
-            duration_ms = wav_duration_ms(root / AUDIO_PATH, cancel)
+            audio_duration_ms = wav_duration_ms(root / AUDIO_PATH, cancel)
+            duration_ms = audio_duration_ms
+
+            metadata = self.manager.load_media_metadata(root)
+            if metadata:
+                source_seconds = metadata.get("container", {}).get(
+                    "duration_seconds"
+                )
+                if isinstance(source_seconds, (int, float)) and source_seconds > 0:
+                    duration_ms = min(
+                        audio_duration_ms,
+                        int(round(source_seconds * 1000)),
+                    )
+
             plan = build_edit_plan(
                 duration_ms,
                 project.get("profile"),
