@@ -1,6 +1,4 @@
-from pathlib import Path
-
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -9,16 +7,14 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
 
 from core.project_manager import ProjectManager
-from media.ffmpeg_tools import (
-    FFmpegNotFoundError,
-    FFmpegTools,
-    MediaProbeError,
-)
+from media.ffmpeg_tools import FFmpegTools
+from app.processing_worker import ProcessingWorker
 
 
 class ProjectWindow(QMainWindow):
@@ -27,6 +23,8 @@ class ProjectWindow(QMainWindow):
 
         self.project_manager = ProjectManager()
         self.ffmpeg_tools = FFmpegTools()
+        self.worker = None
+        self._close_pending = False
 
         self.project_dir, self.project_data = self.project_manager.load_project(
             project_dir
@@ -73,16 +71,27 @@ class ProjectWindow(QMainWindow):
         info_layout.addRow("FFmpeg / FFprobe:", self.ffmpeg_value)
 
         self.status_label = QLabel("Pronto para analisar o vídeo.")
+        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.status_label.setWordWrap(True)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        analyze_button = QPushButton("ANALISAR VÍDEO")
-        analyze_button.clicked.connect(self.analyze_media)
+        self.analyze_button = QPushButton("ANALISAR VÍDEO")
+        self.analyze_button.clicked.connect(self.analyze_media)
+        self.process_button = QPushButton("PROCESSAR ÁUDIO E TRANSCREVER")
+        self.process_button.clicked.connect(lambda: self._start_worker("process"))
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.result_label = QLabel("Transcrição: ainda não processada")
+        self.result_label.setWordWrap(True)
+        self.cancel_button = QPushButton("Cancelar processamento")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_processing)
 
         close_button = QPushButton("Fechar Projeto")
         close_button.clicked.connect(self.close)
 
         buttons = QHBoxLayout()
-        buttons.addWidget(analyze_button)
+        buttons.addWidget(self.analyze_button)
         buttons.addWidget(close_button)
 
         main_layout.addWidget(header)
@@ -90,6 +99,10 @@ class ProjectWindow(QMainWindow):
         main_layout.addSpacing(20)
         main_layout.addWidget(info_frame)
         main_layout.addSpacing(20)
+        main_layout.addWidget(self.result_label)
+        main_layout.addWidget(self.process_button)
+        main_layout.addWidget(self.progress_bar)
+        main_layout.addWidget(self.cancel_button)
         main_layout.addWidget(self.status_label)
         main_layout.addLayout(buttons)
 
@@ -97,62 +110,107 @@ class ProjectWindow(QMainWindow):
 
         self._update_ffmpeg_status()
         self._load_saved_metadata()
+        QTimer.singleShot(0, lambda: self._start_worker("load"))
 
     def analyze_media(self):
-        source_path = self.project_data.get("source", {}).get("original_path")
+        self._start_worker("analyze")
 
-        if not source_path:
-            QMessageBox.warning(
-                self,
-                "Vídeo não encontrado",
-                "Este projeto não possui caminho para o vídeo de origem.",
-            )
+    def _start_worker(self, mode):
+        if self.worker is not None or self._close_pending:
             return
+        self.analyze_button.setEnabled(False)
+        self.process_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.progress_bar.setRange(0, 0)
+        self.status_label.setText("Analisando mídia com FFprobe..." if mode == "analyze"
+                                  else "Carregando resultados..." if mode == "load"
+                                  else "Iniciando processamento...")
+        self.worker = ProcessingWorker(self.project_dir, mode, self)
+        self.worker.stage.connect(self.status_label.setText)
+        self.worker.progress.connect(self._set_progress)
+        self.worker.completed.connect(self._processing_completed)
+        self.worker.error.connect(self._processing_error)
+        self.worker.finished.connect(self._worker_finished)
+        self.worker.start()
 
-        if not Path(source_path).exists():
-            QMessageBox.warning(
-                self,
-                "Vídeo não encontrado",
-                "O vídeo original não está mais no caminho salvo no projeto.",
-            )
-            return
+    def _set_progress(self, value):
+        self.progress_bar.setRange(0, 0 if value < 0 else 100)
+        if value >= 0:
+            self.progress_bar.setValue(value)
 
-        self.status_label.setText("Analisando mídia com FFprobe...")
-
+    def _processing_completed(self, result):
+        if "metadata" in result:
+            self._apply_metadata(result["metadata"])
+            self.status_label.setText("Análise concluída • media_metadata.json salvo.")
+        else:
+            transcript = result["transcript"]
+            silences = result["silences"]
+            lines = ["Áudio: " + ("OK" if result["audio_path"] else "não extraído")]
+            if transcript is not None:
+                lines.extend(["Transcrição: OK", f"Idioma: {transcript['language']['detected']}",
+                              f"Segmentos: {len(transcript['segments'])}"])
+            else:
+                lines.append("Transcrição: ainda não processada")
+            lines.append(f"Silêncios encontrados: {len(silences['silences'])}"
+                         if silences is not None else "Silêncios: ainda não analisados")
+            if transcript is not None:
+                lines.append(transcript["text"][:400])
+            self.result_label.setText("\n".join(lines))
+            self.result_label.setTextFormat(Qt.TextFormat.PlainText)
+            if result["errors"]:
+                self.status_label.setText("Resultados inválidos. Faça backup dos arquivos indicados antes de reprocessar.")
+                if not self._close_pending:
+                    QMessageBox.warning(self, "Resultados inválidos", "\n".join(result["errors"]))
+            else:
+                self.status_label.setText("Concluído." if transcript is not None and silences is not None
+                                          else "Pronto para continuar o processamento.")
+        self._set_progress(100)
         try:
-            metadata = self.ffmpeg_tools.probe(source_path)
-            metadata_file = self.project_manager.save_media_metadata(
-                self.project_dir,
-                metadata,
-            )
-        except FFmpegNotFoundError as error:
-            self.status_label.setText("FFmpeg/FFprobe não encontrado.")
-            QMessageBox.warning(self, "FFmpeg necessário", str(error))
-            self._update_ffmpeg_status()
-            return
-        except MediaProbeError as error:
-            self.status_label.setText("Falha na análise do vídeo.")
-            QMessageBox.critical(self, "Erro ao analisar vídeo", str(error))
-            return
-        except OSError as error:
-            self.status_label.setText("Falha ao salvar a análise.")
-            QMessageBox.critical(
-                self,
-                "Erro ao salvar análise",
-                str(error),
-            )
-            return
+            _, self.project_data = self.project_manager.load_project(self.project_dir)
+        except ValueError as error:
+            self._processing_error(str(error))
 
-        self._apply_metadata(metadata)
-        self.status_label.setText(
-            f"Análise concluída • {metadata_file.name} salvo."
-        )
+    def _processing_error(self, message):
+        self.status_label.setText(message)
+        self.status_label.setWordWrap(True)
+        self._set_progress(0)
+        if not self._close_pending and not (self.worker and self.worker.cancel.is_set()):
+            QMessageBox.warning(self, "Não foi possível concluir", message)
+
+    def _worker_finished(self):
+        worker = self.worker
+        self.worker = None
+        worker.deleteLater()
+        self.analyze_button.setEnabled(True)
+        self.process_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.progress_bar.setRange(0, 100)
+        if self._close_pending:
+            self.close()
+
+    def _cancel_processing(self):
+        if self.worker is not None:
+            self.worker.cancel.set()
+            self.cancel_button.setEnabled(False)
+            self.status_label.setText("Interrompendo... Aguardando a operação atual do Whisper terminar, se houver.")
+
+    def closeEvent(self, event):
+        if self.worker is not None:
+            self._close_pending = True
+            self._cancel_processing()
+            event.ignore()
+        else:
+            event.accept()
 
     def _load_saved_metadata(self):
         metadata = self.project_manager.load_media_metadata(self.project_dir)
 
         if metadata:
-            self._apply_metadata(metadata)
+            try:
+                self._apply_metadata(metadata)
+            except (AttributeError, TypeError, ValueError):
+                self.status_label.setText("Metadados inválidos. Analise o vídeo novamente.")
+                return
             self.status_label.setText(
                 "Metadados carregados. Você pode analisar novamente se quiser."
             )
