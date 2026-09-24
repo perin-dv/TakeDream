@@ -53,6 +53,7 @@ class ProjectManager:
             "decisions",
             "cache",
             "output",
+            "exports",
             "logs",
         ):
             (project_dir / folder).mkdir(parents=True, exist_ok=True)
