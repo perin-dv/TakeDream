@@ -59,10 +59,6 @@ class ReviewRenderPipeline:
                 "O vídeo original não foi encontrado para gerar a nova prévia."
             )
 
-        stage("Salvando ajustes da linha do tempo...")
-        progress(10)
-        write_json(root / EDIT_PLAN_PATH, edit_plan)
-
         destination = _next_preview_path(root)
 
         stage("Renderizando nova prévia...")
@@ -75,6 +71,9 @@ class ReviewRenderPipeline:
         )
 
         check_cancelled(cancel)
+
+        stage("Salvando ajustes da linha do tempo...")
+        write_json(root / EDIT_PLAN_PATH, edit_plan)
 
         relative_output = str(rendered.relative_to(root)).replace("\\", "/")
         self.manager.update_processing(
