@@ -3,6 +3,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.storage import write_json
+
 
 class ProjectManager:
     ALLOWED_VIDEO_EXTENSIONS = {
@@ -91,7 +93,7 @@ class ProjectManager:
         try:
             with project_file.open("r", encoding="utf-8-sig") as file:
                 project_data = json.load(file)
-        except (OSError, json.JSONDecodeError) as error:
+        except (OSError, ValueError) as error:
             raise ValueError(
                 f"Não foi possível abrir o projeto: {error}"
             ) from error
@@ -99,11 +101,13 @@ class ProjectManager:
         if not isinstance(project_data, dict):
             raise ValueError("O project.json possui formato inválido.")
 
-        if not project_data.get("name"):
+        if not isinstance(project_data.get("name"), str) or not project_data["name"].strip():
             raise ValueError("O project.json não possui nome de projeto.")
 
         source = project_data.get("source", {})
-        if not source.get("original_path"):
+        if (not isinstance(source, dict)
+                or not isinstance(source.get("original_path"), str)
+                or not source["original_path"].strip()):
             raise ValueError("O project.json não possui vídeo de origem.")
 
         return path, project_data
@@ -115,11 +119,11 @@ class ProjectManager:
 
         metadata_file = analysis_dir / "media_metadata.json"
 
-        with metadata_file.open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, indent=2, ensure_ascii=False)
+        write_json(metadata_file, metadata)
 
         _, project_data = self.load_project(project_dir)
-        project_data["status"] = "media_analyzed"
+        if project_data.get("status") in ("created", "media_analyzed"):
+            project_data["status"] = "media_analyzed"
         project_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         project_data["media_metadata"] = str(
             metadata_file.relative_to(project_dir)
@@ -138,14 +142,21 @@ class ProjectManager:
         try:
             with metadata_file.open("r", encoding="utf-8-sig") as file:
                 return json.load(file)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             return None
 
     def _write_project_file(self, project_dir, project_data):
         project_file = Path(project_dir) / "project.json"
 
-        with project_file.open("w", encoding="utf-8") as file:
-            json.dump(project_data, file, indent=2, ensure_ascii=False)
+        write_json(project_file, project_data)
+
+    def update_processing(self, project_dir, status, **fields):
+        _, project_data = self.load_project(project_dir)
+        project_data.update(fields)
+        project_data["status"] = status
+        project_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._write_project_file(project_dir, project_data)
+        return project_data
 
     def _create_unique_project_directory(self, project_name):
         folder_name = self._safe_folder_name(project_name) or "projeto"

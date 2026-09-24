@@ -1,9 +1,11 @@
 import json
 import shutil
-import subprocess
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
+
+from core.processing import ProcessingCancelled, ProcessingError
+from media.process import run_media
 
 
 class FFmpegNotFoundError(RuntimeError):
@@ -30,7 +32,7 @@ class FFmpegTools:
             "available": self.is_available,
         }
 
-    def probe(self, source_video):
+    def probe(self, source_video, cancel=None):
         if not self.ffprobe_path:
             raise FFmpegNotFoundError(
                 "FFprobe não foi encontrado no sistema. Instale o FFmpeg e "
@@ -54,29 +56,19 @@ class FFmpegTools:
         ]
 
         try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
+            stdout, _ = run_media(command, cancel=cancel, timeout=60)
+        except ProcessingCancelled:
+            raise
+        except ProcessingError as error:
             raise MediaProbeError(
                 f"Não foi possível executar o FFprobe: {error}"
             ) from error
 
-        if result.returncode != 0:
-            details = result.stderr.strip() or "Erro desconhecido do FFprobe."
-            raise MediaProbeError(
-                f"FFprobe não conseguiu analisar o vídeo.\n\n{details}"
-            )
-
         try:
-            raw = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
+            raw = json.loads(stdout)
+            if not isinstance(raw, dict) or not isinstance(raw.get("streams", []), list):
+                raise ValueError("Estrutura inválida.")
+        except ValueError as error:
             raise MediaProbeError(
                 "O FFprobe retornou dados inválidos."
             ) from error
