@@ -41,6 +41,51 @@ restaure-o ou mova também os resultados associados antes de gerar novo áudio.
 Não substitua manualmente o vídeo/WAV de um projeto já processado; crie um novo
 projeto para outra mídia. A versão 0.1 não identifica alterações externas por hash.
 
+
+## Primeira edição automática
+
+Depois que o projeto possuir `transcription/transcript.json` e
+`analysis/silences.json`, a tela libera **GERAR PRIMEIRA EDIÇÃO AUTOMÁTICA**.
+
+A V0.1 ainda não usa IA semântica para decidir cortes. O primeiro planner é
+determinístico e seguro:
+
+- perfil `YouTube`;
+- estilos `Dinâmico` e `Clean`;
+- usa os silêncios detectados pelo FFmpeg;
+- mantém uma margem antes/depois da fala;
+- ignora pausas pequenas;
+- protege o começo e o fim do vídeo;
+- gera e valida `decisions/edit_plan.json` antes de renderizar;
+- nunca manda um plano inválido diretamente ao FFmpeg.
+
+O estilo **Dinâmico** remove mais pausas; o **Clean** é mais conservador. As regras
+ficam em `profiles/youtube.py` e poderão ser substituídas/expandidas posteriormente
+por decisões semânticas de IA sem acoplar o motor de renderização.
+
+Fluxo:
+
+```text
+transcript.json + silences.json
+        ↓
+perfil YouTube + estilo
+        ↓
+decisions/edit_plan.json
+        ↓
+validador
+        ↓
+FFmpeg renderer
+        ↓
+output/video_editado.mp4
+```
+
+O renderer mantém somente os segmentos `keep` do plano, concatena áudio/vídeo e
+gera H.264/AAC. O processamento ocorre no mesmo worker em background usado pelo
+restante do pipeline, portanto a interface continua responsiva.
+
+Nesta fase os cortes são somente por pausas. Erros de fala, repetições, importância,
+legendas, zoom, B-roll e análise visual entram em milestones posteriores.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.
@@ -76,7 +121,7 @@ deixar arquivos temporários, que não são usados como resultados na próxima a
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -v
-.\.venv\Scripts\python.exe -m compileall -q app core media transcription tests tools
+.\.venv\Scripts\python.exe -m compileall -q app core editor media profiles renderer transcription tests tools
 .\.venv\Scripts\python.exe -m pip check
 ```
 
