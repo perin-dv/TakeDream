@@ -58,8 +58,8 @@ def edited_to_source_ms(plan, edited_ms):
 
         duration = segment["end_ms"] - segment["start_ms"]
 
-        if edited_ms <= cursor + duration:
-            offset = min(duration, max(0, edited_ms - cursor))
+        if edited_ms < cursor + duration:
+            offset = max(0, edited_ms - cursor)
             return segment["start_ms"] + offset
 
         cursor += duration
