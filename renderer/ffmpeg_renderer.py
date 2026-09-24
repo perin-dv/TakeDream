@@ -104,7 +104,7 @@ class FFmpegRenderer:
                     "error",
                     "-i",
                     str(source),
-                    "-filter_complex_script",
+                    "-/filter_complex",
                     str(script_path),
                     "-map",
                     "[outv]",
