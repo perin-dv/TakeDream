@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.processing_worker import ProcessingWorker
 from core.project_manager import ProjectManager
 from media.ffmpeg_tools import FFmpegTools
-from app.processing_worker import ProcessingWorker
 
 
 class ProjectWindow(QMainWindow):
@@ -25,13 +25,14 @@ class ProjectWindow(QMainWindow):
         self.ffmpeg_tools = FFmpegTools()
         self.worker = None
         self._close_pending = False
+        self._can_edit = False
 
         self.project_dir, self.project_data = self.project_manager.load_project(
             project_dir
         )
 
         self.setWindowTitle(f"TakeDream — {self.project_data['name']}")
-        self.resize(920, 620)
+        self.resize(920, 700)
 
         container = QWidget()
         main_layout = QVBoxLayout(container)
@@ -77,12 +78,31 @@ class ProjectWindow(QMainWindow):
 
         self.analyze_button = QPushButton("ANALISAR VÍDEO")
         self.analyze_button.clicked.connect(self.analyze_media)
+
         self.process_button = QPushButton("PROCESSAR ÁUDIO E TRANSCREVER")
-        self.process_button.clicked.connect(lambda: self._start_worker("process"))
+        self.process_button.clicked.connect(
+            lambda: self._start_worker("process")
+        )
+
+        self.edit_button = QPushButton("GERAR PRIMEIRA EDIÇÃO AUTOMÁTICA")
+        self.edit_button.setEnabled(False)
+        self.edit_button.clicked.connect(
+            lambda: self._start_worker("edit")
+        )
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
+
         self.result_label = QLabel("Transcrição: ainda não processada")
         self.result_label.setWordWrap(True)
+        self.result_label.setTextFormat(Qt.TextFormat.PlainText)
+
+        self.edit_result_label = QLabel(
+            "Edição automática: aguardando transcrição e silêncios."
+        )
+        self.edit_result_label.setWordWrap(True)
+        self.edit_result_label.setTextFormat(Qt.TextFormat.PlainText)
+
         self.cancel_button = QPushButton("Cancelar processamento")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._cancel_processing)
@@ -100,7 +120,10 @@ class ProjectWindow(QMainWindow):
         main_layout.addWidget(info_frame)
         main_layout.addSpacing(20)
         main_layout.addWidget(self.result_label)
+        main_layout.addWidget(self.edit_result_label)
+        main_layout.addSpacing(10)
         main_layout.addWidget(self.process_button)
+        main_layout.addWidget(self.edit_button)
         main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(self.cancel_button)
         main_layout.addWidget(self.status_label)
@@ -118,13 +141,24 @@ class ProjectWindow(QMainWindow):
     def _start_worker(self, mode):
         if self.worker is not None or self._close_pending:
             return
+
         self.analyze_button.setEnabled(False)
         self.process_button.setEnabled(False)
+        self.edit_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.progress_bar.setRange(0, 0)
-        self.status_label.setText("Analisando mídia com FFprobe..." if mode == "analyze"
-                                  else "Carregando resultados..." if mode == "load"
-                                  else "Iniciando processamento...")
+
+        if mode == "analyze":
+            status = "Analisando mídia com FFprobe..."
+        elif mode == "load":
+            status = "Carregando resultados..."
+        elif mode == "edit":
+            status = "Preparando primeira edição automática..."
+        else:
+            status = "Iniciando processamento..."
+
+        self.status_label.setText(status)
+
         self.worker = ProcessingWorker(self.project_dir, mode, self)
         self.worker.stage.connect(self.status_label.setText)
         self.worker.progress.connect(self._set_progress)
@@ -141,32 +175,117 @@ class ProjectWindow(QMainWindow):
     def _processing_completed(self, result):
         if "metadata" in result:
             self._apply_metadata(result["metadata"])
-            self.status_label.setText("Análise concluída • media_metadata.json salvo.")
+            self.status_label.setText(
+                "Análise concluída • media_metadata.json salvo."
+            )
         else:
-            transcript = result["transcript"]
-            silences = result["silences"]
-            lines = ["Áudio: " + ("OK" if result["audio_path"] else "não extraído")]
+            transcript = result.get("transcript")
+            silences = result.get("silences")
+            errors = result.get("errors", [])
+            edit_errors = result.get("edit_errors", [])
+            edit_plan = result.get("edit_plan")
+            output_path = result.get("output_path")
+
+            lines = [
+                "Áudio: "
+                + ("OK" if result.get("audio_path") else "não extraído")
+            ]
+
             if transcript is not None:
-                lines.extend(["Transcrição: OK", f"Idioma: {transcript['language']['detected']}",
-                              f"Segmentos: {len(transcript['segments'])}"])
+                lines.extend(
+                    [
+                        "Transcrição: OK",
+                        f"Idioma: {transcript['language']['detected']}",
+                        f"Segmentos: {len(transcript['segments'])}",
+                    ]
+                )
             else:
                 lines.append("Transcrição: ainda não processada")
-            lines.append(f"Silêncios encontrados: {len(silences['silences'])}"
-                         if silences is not None else "Silêncios: ainda não analisados")
+
+            lines.append(
+                f"Silêncios encontrados: {len(silences['silences'])}"
+                if silences is not None
+                else "Silêncios: ainda não analisados"
+            )
+
             if transcript is not None:
                 lines.append(transcript["text"][:400])
+
             self.result_label.setText("\n".join(lines))
-            self.result_label.setTextFormat(Qt.TextFormat.PlainText)
-            if result["errors"]:
-                self.status_label.setText("Resultados inválidos. Faça backup dos arquivos indicados antes de reprocessar.")
+
+            edit_lines = []
+            if edit_plan is not None:
+                stats = edit_plan["stats"]
+                original = self._format_ms(
+                    edit_plan["source_duration_ms"]
+                )
+                estimated = self._format_ms(
+                    stats["estimated_duration_ms"]
+                )
+                removed = self._format_ms(
+                    stats["removed_duration_ms"]
+                )
+
+                edit_lines.extend(
+                    [
+                        "Plano de edição: OK",
+                        f"Cortes automáticos: {stats['cuts']}",
+                        f"Duração original: {original}",
+                        f"Duração estimada: {estimated}",
+                        f"Tempo removido: {removed}",
+                    ]
+                )
+
+            if output_path:
+                edit_lines.append(f"Vídeo editado: {output_path}")
+
+            if not edit_lines:
+                edit_lines.append(
+                    "Edição automática: aguardando transcrição e silêncios."
+                )
+
+            self.edit_result_label.setText("\n".join(edit_lines))
+
+            self._can_edit = (
+                bool(result.get("audio_path"))
+                and transcript is not None
+                and silences is not None
+                and not errors
+                and not edit_errors
+            )
+
+            all_errors = list(errors) + list(edit_errors)
+
+            if all_errors:
+                self.status_label.setText(
+                    "Resultados inválidos. Faça backup dos arquivos "
+                    "indicados antes de reprocessar."
+                )
                 if not self._close_pending:
-                    QMessageBox.warning(self, "Resultados inválidos", "\n".join(result["errors"]))
+                    QMessageBox.warning(
+                        self,
+                        "Resultados inválidos",
+                        "\n".join(all_errors),
+                    )
+            elif output_path:
+                self.status_label.setText(
+                    "Primeira edição automática pronta."
+                )
+            elif transcript is not None and silences is not None:
+                self.status_label.setText(
+                    "Transcrição pronta. Já pode gerar a primeira edição automática."
+                )
             else:
-                self.status_label.setText("Concluído." if transcript is not None and silences is not None
-                                          else "Pronto para continuar o processamento.")
+                self.status_label.setText(
+                    "Pronto para continuar o processamento."
+                )
+
         self._set_progress(100)
+
         try:
-            _, self.project_data = self.project_manager.load_project(self.project_dir)
+            _, self.project_data = self.project_manager.load_project(
+                self.project_dir
+            )
         except ValueError as error:
             self._processing_error(str(error))
 
@@ -174,17 +293,29 @@ class ProjectWindow(QMainWindow):
         self.status_label.setText(message)
         self.status_label.setWordWrap(True)
         self._set_progress(0)
-        if not self._close_pending and not (self.worker and self.worker.cancel.is_set()):
-            QMessageBox.warning(self, "Não foi possível concluir", message)
+
+        if not self._close_pending and not (
+            self.worker and self.worker.cancel.is_set()
+        ):
+            QMessageBox.warning(
+                self,
+                "Não foi possível concluir",
+                message,
+            )
 
     def _worker_finished(self):
         worker = self.worker
         self.worker = None
-        worker.deleteLater()
+
+        if worker is not None:
+            worker.deleteLater()
+
         self.analyze_button.setEnabled(True)
         self.process_button.setEnabled(True)
+        self.edit_button.setEnabled(self._can_edit)
         self.cancel_button.setEnabled(False)
         self.progress_bar.setRange(0, 100)
+
         if self._close_pending:
             self.close()
 
@@ -192,7 +323,9 @@ class ProjectWindow(QMainWindow):
         if self.worker is not None:
             self.worker.cancel.set()
             self.cancel_button.setEnabled(False)
-            self.status_label.setText("Interrompendo... Aguardando a operação atual do Whisper terminar, se houver.")
+            self.status_label.setText(
+                "Interrompendo processamento com segurança..."
+            )
 
     def closeEvent(self, event):
         if self.worker is not None:
@@ -203,14 +336,19 @@ class ProjectWindow(QMainWindow):
             event.accept()
 
     def _load_saved_metadata(self):
-        metadata = self.project_manager.load_media_metadata(self.project_dir)
+        metadata = self.project_manager.load_media_metadata(
+            self.project_dir
+        )
 
         if metadata:
             try:
                 self._apply_metadata(metadata)
             except (AttributeError, TypeError, ValueError):
-                self.status_label.setText("Metadados inválidos. Analise o vídeo novamente.")
+                self.status_label.setText(
+                    "Metadados inválidos. Analise o vídeo novamente."
+                )
                 return
+
             self.status_label.setText(
                 "Metadados carregados. Você pode analisar novamente se quiser."
             )
@@ -229,7 +367,9 @@ class ProjectWindow(QMainWindow):
             if not availability["ffprobe"]:
                 missing.append("FFprobe")
 
-            self.ffmpeg_value.setText("Ausente: " + ", ".join(missing))
+            self.ffmpeg_value.setText(
+                "Ausente: " + ", ".join(missing)
+            )
 
     def _apply_metadata(self, metadata):
         container = metadata.get("container", {})
@@ -244,14 +384,34 @@ class ProjectWindow(QMainWindow):
         )
 
         fps = video.get("fps")
-        self.fps_value.setText(f"{fps:g}" if fps is not None else "—")
+        self.fps_value.setText(
+            f"{fps:g}" if fps is not None else "—"
+        )
 
-        self.video_codec_value.setText(video.get("codec") or "—")
+        self.video_codec_value.setText(
+            video.get("codec") or "—"
+        )
 
         has_audio = bool(audio.get("present"))
-        self.audio_value.setText("Sim" if has_audio else "Não")
+        self.audio_value.setText(
+            "Sim" if has_audio else "Não"
+        )
         self.audio_codec_value.setText(
             audio.get("codec") if has_audio else "—"
         )
 
         self._update_ffmpeg_status()
+
+    @staticmethod
+    def _format_ms(milliseconds):
+        if type(milliseconds) is not int:
+            return "—"
+
+        total_seconds = max(0, int(round(milliseconds / 1000)))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        return f"{minutes:02d}:{seconds:02d}"
