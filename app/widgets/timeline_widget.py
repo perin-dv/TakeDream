@@ -18,7 +18,7 @@ class TimelineWidget(QWidget):
         self._mark_out_ms = None
         self._zoom_factor = 1
         self._base_width = 1080
-        self.setMinimumHeight(104)
+        self.setFixedHeight(104)
         self.setMinimumWidth(self._base_width)
         self.setMouseTracking(True)
 
@@ -53,7 +53,7 @@ class TimelineWidget(QWidget):
         self._zoom_factor = factor
         self.setMinimumWidth(self._base_width * factor)
         self.resize(
-            max(self.width(), self.minimumWidth()),
+            self.minimumWidth(),
             self.height(),
         )
         self.updateGeometry()
