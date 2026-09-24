@@ -247,7 +247,8 @@ class ProjectWindow(QMainWindow):
             self.edit_result_label.setText("\n".join(edit_lines))
 
             self._can_edit = (
-                transcript is not None
+                bool(result.get("audio_path"))
+                and transcript is not None
                 and silences is not None
                 and not errors
                 and not edit_errors
