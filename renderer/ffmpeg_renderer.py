@@ -11,7 +11,7 @@ def _seconds(milliseconds):
     return f"{milliseconds / 1000:.6f}"
 
 
-def build_filter_graph(edit_plan):
+def build_filter_graph(edit_plan, output_height=None):
     keep = kept_segments(edit_plan)
     if not keep:
         raise ValueError("O plano de edição não possui nenhum trecho para manter.")
@@ -35,9 +35,18 @@ def build_filter_graph(edit_plan):
         f"[v{index}][a{index}]"
         for index in range(len(keep))
     )
-    filters.append(
-        f"{inputs}concat=n={len(keep)}:v=1:a=1[outv][outa]"
-    )
+
+    if output_height is None:
+        filters.append(
+            f"{inputs}concat=n={len(keep)}:v=1:a=1[outv][outa]"
+        )
+    else:
+        filters.append(
+            f"{inputs}concat=n={len(keep)}:v=1:a=1[joinedv][outa]"
+        )
+        filters.append(
+            f"[joinedv]scale=-2:{int(output_height)}:flags=lanczos[outv]"
+        )
 
     return ";\n".join(filters)
 
@@ -46,7 +55,18 @@ class FFmpegRenderer:
     def __init__(self, ffmpeg_tools):
         self.tools = ffmpeg_tools
 
-    def render(self, source, destination, edit_plan, cancel=None):
+    def render(
+        self,
+        source,
+        destination,
+        edit_plan,
+        cancel=None,
+        *,
+        output_height=None,
+        crf=20,
+        audio_bitrate="192k",
+        preset="veryfast",
+    ):
         validate_edit_plan(edit_plan)
         check_cancelled(cancel)
 
@@ -69,8 +89,18 @@ class FFmpegRenderer:
         metadata = self.tools.probe(source, cancel=cancel)
         if not metadata["audio"]["present"]:
             raise ProcessingError(
-                "A primeira edição automática exige vídeo com faixa de áudio."
+                "A edição automática exige vídeo com faixa de áudio."
             )
+
+        source_height = metadata.get("video", {}).get("height")
+        effective_height = None
+        if (
+            type(output_height) is int
+            and output_height > 0
+            and type(source_height) is int
+            and source_height > output_height
+        ):
+            effective_height = output_height
 
         destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -91,7 +121,7 @@ class FFmpegRenderer:
 
         try:
             Path(script_path).write_text(
-                build_filter_graph(edit_plan),
+                build_filter_graph(edit_plan, effective_height),
                 encoding="utf-8",
             )
 
@@ -113,13 +143,13 @@ class FFmpegRenderer:
                     "-c:v",
                     "libx264",
                     "-preset",
-                    "veryfast",
+                    str(preset),
                     "-crf",
-                    "20",
+                    str(int(crf)),
                     "-c:a",
                     "aac",
                     "-b:a",
-                    "192k",
+                    str(audio_bitrate),
                     "-movflags",
                     "+faststart",
                     "-y",
@@ -130,15 +160,22 @@ class FFmpegRenderer:
 
             check_cancelled(cancel)
 
-            if not Path(temporary_output).exists() or Path(temporary_output).stat().st_size <= 0:
-                raise ProcessingError("O FFmpeg não produziu um vídeo de saída válido.")
+            if (
+                not Path(temporary_output).exists()
+                or Path(temporary_output).stat().st_size <= 0
+            ):
+                raise ProcessingError(
+                    "O FFmpeg não produziu um vídeo de saída válido."
+                )
 
             rendered_metadata = self.tools.probe(
                 temporary_output,
                 cancel=cancel,
             )
             if rendered_metadata["container"]["duration_seconds"] in (None, 0):
-                raise ProcessingError("O vídeo renderizado possui duração inválida.")
+                raise ProcessingError(
+                    "O vídeo renderizado possui duração inválida."
+                )
 
             if os.name == "nt":
                 os.rename(temporary_output, destination)
