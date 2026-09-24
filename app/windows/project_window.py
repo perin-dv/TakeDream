@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.processing_worker import ProcessingWorker
+from app.windows.review_window import ReviewWindow
 from core.project_manager import ProjectManager
 from media.ffmpeg_tools import FFmpegTools
 
@@ -26,6 +27,9 @@ class ProjectWindow(QMainWindow):
         self.worker = None
         self._close_pending = False
         self._can_edit = False
+        self._can_review = False
+        self._current_mode = None
+        self.review_windows = []
 
         self.project_dir, self.project_data = self.project_manager.load_project(
             project_dir
@@ -90,6 +94,10 @@ class ProjectWindow(QMainWindow):
             lambda: self._start_worker("edit")
         )
 
+        self.review_button = QPushButton("REVISAR EDIÇÃO NA LINHA DO TEMPO")
+        self.review_button.setEnabled(False)
+        self.review_button.clicked.connect(self.open_review)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
 
@@ -124,6 +132,7 @@ class ProjectWindow(QMainWindow):
         main_layout.addSpacing(10)
         main_layout.addWidget(self.process_button)
         main_layout.addWidget(self.edit_button)
+        main_layout.addWidget(self.review_button)
         main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(self.cancel_button)
         main_layout.addWidget(self.status_label)
@@ -142,9 +151,11 @@ class ProjectWindow(QMainWindow):
         if self.worker is not None or self._close_pending:
             return
 
+        self._current_mode = mode
         self.analyze_button.setEnabled(False)
         self.process_button.setEnabled(False)
         self.edit_button.setEnabled(False)
+        self.review_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.progress_bar.setRange(0, 0)
 
@@ -238,6 +249,8 @@ class ProjectWindow(QMainWindow):
 
             if output_path:
                 edit_lines.append(f"Vídeo editado: {output_path}")
+                self._can_review = True
+                self.review_button.setEnabled(self.worker is None)
 
             if not edit_lines:
                 edit_lines.append(
@@ -269,8 +282,10 @@ class ProjectWindow(QMainWindow):
                     )
             elif output_path:
                 self.status_label.setText(
-                    "Primeira edição automática pronta."
+                    "Edição pronta. Revise os cortes na linha do tempo."
                 )
+                if self._current_mode == "edit":
+                    QTimer.singleShot(150, self.open_review)
             elif transcript is not None and silences is not None:
                 self.status_label.setText(
                     "Transcrição pronta. Já pode gerar a primeira edição automática."
@@ -313,11 +328,36 @@ class ProjectWindow(QMainWindow):
         self.analyze_button.setEnabled(True)
         self.process_button.setEnabled(True)
         self.edit_button.setEnabled(self._can_edit)
+        self.review_button.setEnabled(self._can_review)
         self.cancel_button.setEnabled(False)
         self.progress_bar.setRange(0, 100)
 
         if self._close_pending:
             self.close()
+
+    def open_review(self):
+        if not self._can_review:
+            return
+
+        try:
+            window = ReviewWindow(self.project_dir)
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Não foi possível abrir a revisão",
+                str(error),
+            )
+            return
+
+        self.review_windows.append(window)
+        window.destroyed.connect(
+            lambda: self._remove_review_window(window)
+        )
+        window.show()
+
+    def _remove_review_window(self, window):
+        if window in self.review_windows:
+            self.review_windows.remove(window)
 
     def _cancel_processing(self):
         if self.worker is not None:

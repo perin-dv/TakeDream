@@ -86,6 +86,43 @@ restante do pipeline, portanto a interface continua responsiva.
 Nesta fase os cortes são somente por pausas. Erros de fala, repetições, importância,
 legendas, zoom, B-roll e análise visual entram em milestones posteriores.
 
+## Revisão na linha do tempo e exportação
+
+Depois que a primeira edição automática termina, o TakeDream abre a tela de
+**Revisão**. Ela usa o MP4 renderizado como prévia e mostra a timeline do vídeo
+original:
+
+- verde = trecho mantido;
+- vermelho = corte automático;
+- linha branca = posição atual da reprodução.
+
+O usuário pode clicar em um trecho removido e usar **RESTAURAR CORTE SELECIONADO**.
+Essas alterações ficam pendentes até **SALVAR E GERAR NOVA PRÉVIA**. A nova prévia
+é renderizada a partir do vídeo original + `edit_plan.json`, evitando recompressões
+em cascata.
+
+Nesta primeira versão manual, a revisão permite restaurar cortes inteiros.
+Ajuste fino com alças de entrada/saída, divisão de clipes e novos cortes manuais
+fica para uma etapa posterior.
+
+A tela também oferece:
+
+- player interno;
+- abrir a prévia no player padrão do Windows;
+- abrir a pasta do projeto;
+- exportação final em `Original`, `1080p`, `720p` ou `480p`.
+
+Os arquivos finais ficam em:
+
+```text
+exports/
+└── video_final_<perfil>.mp4
+```
+
+O export final sempre usa o vídeo original e o plano de edição atual. Se a resolução
+escolhida for maior que a origem, o TakeDream mantém a resolução original em vez de
+fazer upscale artificial.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.
