@@ -259,6 +259,10 @@ class ReviewWindow(QMainWindow):
             return
 
         self._dirty = True
+        self.player.pause()
+        self.play_button.setText("▶ Reproduzir")
+        self.play_button.setEnabled(False)
+        self.position_slider.setEnabled(False)
         self.timeline.set_plan(self.plan)
         self.restore_button.setEnabled(False)
         self.reset_button.setEnabled(True)
@@ -279,6 +283,8 @@ class ReviewWindow(QMainWindow):
         self.restore_button.setEnabled(False)
         self.reset_button.setEnabled(False)
         self.rerender_button.setEnabled(False)
+        self.play_button.setEnabled(True)
+        self.position_slider.setEnabled(True)
         self.export_button.setEnabled(True)
         self.selection_label.setText("Alterações da revisão desfeitas.")
         self.status_label.setText("Prévia carregada. Revise os cortes.")
@@ -349,6 +355,8 @@ class ReviewWindow(QMainWindow):
             self.timeline.set_plan(self.plan)
             self.reset_button.setEnabled(False)
             self.rerender_button.setEnabled(False)
+            self.play_button.setEnabled(True)
+            self.position_slider.setEnabled(True)
             self.export_button.setEnabled(True)
             self.selection_label.setText("Nova prévia gerada com os ajustes.")
             self.status_label.setText("Nova prévia pronta para revisão.")
