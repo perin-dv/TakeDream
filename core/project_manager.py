@@ -62,6 +62,7 @@ class ProjectManager:
             "style": style,
             "status": "created",
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "source": {
                 "original_path": str(source_path),
                 "filename": source_path.name,
@@ -69,11 +70,82 @@ class ProjectManager:
             },
         }
 
-        project_file = project_dir / "project.json"
+        self._write_project_file(project_dir, project_data)
+        return project_dir
+
+    def load_project(self, project_path):
+        path = Path(project_path).expanduser().resolve()
+
+        if path.is_dir():
+            project_file = path / "project.json"
+        else:
+            project_file = path
+            path = project_file.parent
+
+        if project_file.name.lower() != "project.json":
+            raise ValueError("Selecione um arquivo project.json do TakeDream.")
+
+        if not project_file.exists():
+            raise ValueError("O project.json selecionado não existe.")
+
+        try:
+            with project_file.open("r", encoding="utf-8-sig") as file:
+                project_data = json.load(file)
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"Não foi possível abrir o projeto: {error}"
+            ) from error
+
+        if not isinstance(project_data, dict):
+            raise ValueError("O project.json possui formato inválido.")
+
+        if not project_data.get("name"):
+            raise ValueError("O project.json não possui nome de projeto.")
+
+        source = project_data.get("source", {})
+        if not source.get("original_path"):
+            raise ValueError("O project.json não possui vídeo de origem.")
+
+        return path, project_data
+
+    def save_media_metadata(self, project_dir, metadata):
+        project_dir = Path(project_dir).expanduser().resolve()
+        analysis_dir = project_dir / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+
+        metadata_file = analysis_dir / "media_metadata.json"
+
+        with metadata_file.open("w", encoding="utf-8") as file:
+            json.dump(metadata, file, indent=2, ensure_ascii=False)
+
+        _, project_data = self.load_project(project_dir)
+        project_data["status"] = "media_analyzed"
+        project_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        project_data["media_metadata"] = str(
+            metadata_file.relative_to(project_dir)
+        )
+
+        self._write_project_file(project_dir, project_data)
+        return metadata_file
+
+    def load_media_metadata(self, project_dir):
+        project_dir = Path(project_dir).expanduser().resolve()
+        metadata_file = project_dir / "analysis" / "media_metadata.json"
+
+        if not metadata_file.exists():
+            return None
+
+        try:
+            with metadata_file.open("r", encoding="utf-8-sig") as file:
+                return json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _write_project_file(self, project_dir, project_data):
+        project_file = Path(project_dir) / "project.json"
+
         with project_file.open("w", encoding="utf-8") as file:
             json.dump(project_data, file, indent=2, ensure_ascii=False)
-
-        return project_dir
 
     def _create_unique_project_directory(self, project_name):
         folder_name = self._safe_folder_name(project_name) or "projeto"
