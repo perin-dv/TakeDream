@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.windows.new_project_dialog import NewProjectDialog
+from app.windows.project_window import ProjectWindow
 from core.project_manager import ProjectManager
 
 
@@ -18,6 +20,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.project_manager = ProjectManager()
+        self.project_windows = []
 
         self.setWindowTitle("TakeDream")
         self.resize(800, 500)
@@ -38,8 +41,7 @@ class MainWindow(QMainWindow):
         new_project_button.clicked.connect(self.create_project)
 
         open_project_button = QPushButton("Abrir Projeto")
-        open_project_button.setEnabled(False)
-        open_project_button.setToolTip("Será implementado na próxima etapa.")
+        open_project_button.clicked.connect(self.open_project)
 
         layout.addStretch()
         layout.addWidget(title)
@@ -81,3 +83,54 @@ class MainWindow(QMainWindow):
             "Projeto criado",
             f"O projeto foi criado com sucesso.\n\n{project_dir}",
         )
+
+        self._show_project_window(project_dir)
+
+    def open_project(self):
+        project_file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Abrir projeto TakeDream",
+            str(self.project_manager.projects_root),
+            "Projeto TakeDream (project.json)",
+        )
+
+        if not project_file:
+            return
+
+        try:
+            project_dir, project_data = self.project_manager.load_project(
+                project_file
+            )
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Projeto inválido",
+                str(error),
+            )
+            return
+
+        self.status_label.setText(
+            f"Projeto aberto: {project_data['name']}"
+        )
+        self._show_project_window(project_dir)
+
+    def _show_project_window(self, project_dir):
+        try:
+            window = ProjectWindow(project_dir)
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Projeto inválido",
+                str(error),
+            )
+            return
+
+        self.project_windows.append(window)
+        window.destroyed.connect(
+            lambda: self._remove_project_window(window)
+        )
+        window.show()
+
+    def _remove_project_window(self, window):
+        if window in self.project_windows:
+            self.project_windows.remove(window)
