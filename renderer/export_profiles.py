@@ -8,7 +8,7 @@ class ExportProfile:
     height: int | None
     crf: int
     audio_bitrate: str
-    preset: str = "medium"
+    preset: str = "veryfast"
 
 
 EXPORT_PROFILES = (
