@@ -173,6 +173,38 @@ class PipelineTests(unittest.TestCase):
                 "160k",
             )
 
+    def test_original_export_reuses_existing_preview(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project, _ = self._project(Path(temporary))
+            preview = project / "output" / "video_editado.mp4"
+            preview.parent.mkdir(parents=True, exist_ok=True)
+            preview.write_bytes(b"preview-video")
+
+            manager = ProjectManager()
+            manager.update_processing(
+                project,
+                "rendered",
+                output_path="output/video_editado.mp4",
+            )
+
+            class FakeTools:
+                def probe(self, path, cancel=None):
+                    return {"video": {"height": 1080}}
+
+            renderer = FakeRenderer()
+            result = ExportPipeline(
+                tools=FakeTools(),
+                renderer=renderer,
+            ).run(project, "original")
+
+            self.assertTrue((project / result["export_path"]).exists())
+            self.assertEqual(
+                (project / result["export_path"]).read_bytes(),
+                b"preview-video",
+            )
+            self.assertEqual(result["export_mode"], "smart_copy")
+            self.assertEqual(renderer.calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()
