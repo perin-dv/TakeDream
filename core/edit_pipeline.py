@@ -219,7 +219,7 @@ class AutoEditPipeline:
                 "output_path": relative_output,
                 "edit_errors": [],
                 "reused_output": False,
-                "render_encoder": self.renderer.last_encoder.label,
+                "render_encoder": getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido"),
             }
         )
         return results
