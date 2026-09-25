@@ -150,6 +150,8 @@ class ExportPipeline:
                 crf=profile.crf,
                 audio_bitrate=profile.audio_bitrate,
                 preset=profile.preset,
+                progress=progress,
+                stage=stage,
             )
             export_mode = "render"
 
@@ -172,4 +174,9 @@ class ExportPipeline:
             "export_profile": profile.key,
             "export_label": profile.label,
             "export_mode": export_mode,
+            "render_encoder": (
+                self.renderer.last_encoder.label
+                if export_mode == "render"
+                else "Smart Copy"
+            ),
         }
