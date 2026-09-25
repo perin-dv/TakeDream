@@ -635,10 +635,6 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         self.sidebar.set_active(active)
 
-        if target in ("home", "projects", "exports"):
-            self._build_all_pages()
-            self.pages.setCurrentIndex(index)
-            self.sidebar.set_active(active)
 
     def create_project(self):
         dialog = NewProjectDialog(self)
