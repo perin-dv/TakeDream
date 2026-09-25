@@ -104,10 +104,10 @@ class TimelineWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         area = self.rect().adjusted(12, 20, -12, -24)
-        painter.fillRect(area, QColor("#20242b"))
+        painter.fillRect(area, QColor("#0F1530"))
 
         if self._plan is None:
-            painter.setPen(QColor("#9aa4b2"))
+            painter.setPen(QColor("#9AA6CF"))
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
@@ -159,17 +159,17 @@ class TimelineWidget(QWidget):
 
             if segment["action"] == "remove":
                 fill = QColor(
-                    217,
-                    93,
-                    93,
-                    185 if self._thumbnails else 255,
+                    255,
+                    92,
+                    122,
+                    190 if self._thumbnails else 235,
                 )
             else:
                 fill = QColor(
-                    74,
-                    168,
-                    137,
-                    150 if self._thumbnails else 255,
+                    139,
+                    92,
+                    246,
+                    72 if self._thumbnails else 150,
                 )
 
             painter.fillRect(rect, fill)
@@ -184,7 +184,7 @@ class TimelineWidget(QWidget):
                 )
 
             if index == self._selected_index:
-                painter.setPen(QPen(QColor("#ffffff"), 2))
+                painter.setPen(QPen(QColor("#D8B4FE"), 2))
                 painter.drawRect(rect)
 
         if self._waveform:
