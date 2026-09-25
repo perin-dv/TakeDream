@@ -23,6 +23,7 @@ from app.ui.components import (
     muted_label,
     section_title,
 )
+from app.ui.icons import app_icon, icon_pixmap
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
@@ -90,12 +91,19 @@ class ProjectWindow(QMainWindow):
         # --------------------------------------------------------------
         header = QHBoxLayout()
 
-        icon = QLabel("✦")
+        icon = QLabel()
         icon.setFixedSize(44, 44)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setPixmap(
+            icon_pixmap(
+                "brand",
+                color="#FFFFFF",
+                accent="#C084FC",
+                size=32,
+            )
+        )
         icon.setStyleSheet(
             "background:#6D28D9; border-radius:22px;"
-            "font-size:20px; font-weight:800; color:#FFFFFF;"
         )
 
         header_text = QVBoxLayout()
@@ -153,7 +161,7 @@ class ProjectWindow(QMainWindow):
 
         preview_header = QHBoxLayout()
         preview_header.addWidget(
-            section_title("◉  Vídeo do projeto")
+            section_title("Vídeo do projeto", "preview")
         )
         preview_header.addStretch(1)
         aspect_badge = QLabel(
@@ -196,7 +204,8 @@ class ProjectWindow(QMainWindow):
             )
 
         preview_controls = QHBoxLayout()
-        self.preview_play_button = QPushButton("▶  Reproduzir")
+        self.preview_play_button = QPushButton("Reproduzir")
+        self.preview_play_button.setIcon(app_icon("play", color="#EDE9FE", accent="#A855F7", size=17))
         self.preview_play_button.clicked.connect(
             self._toggle_preview
         )
@@ -277,7 +286,7 @@ class ProjectWindow(QMainWindow):
         pipeline_layout.setSpacing(10)
 
         pipeline_layout.addWidget(
-            section_title("⚡  Fluxo do projeto")
+            section_title("Fluxo do projeto", "sparkles")
         )
         pipeline_layout.addWidget(
             muted_label(
@@ -340,7 +349,7 @@ class ProjectWindow(QMainWindow):
         results_layout.setContentsMargins(14, 12, 14, 12)
         results_layout.setSpacing(7)
         results_layout.addWidget(
-            section_title("▤  Resultado do processamento")
+            section_title("Resultado do processamento", "ai")
         )
 
         self.result_label = QLabel(
@@ -380,7 +389,7 @@ class ProjectWindow(QMainWindow):
         progress_text = QVBoxLayout()
         progress_text.setSpacing(2)
         progress_text.addWidget(
-            section_title("Processamento")
+            section_title("Processamento", "settings")
         )
         progress_text.addWidget(
             muted_label(
@@ -397,6 +406,9 @@ class ProjectWindow(QMainWindow):
         self.cancel_button = QPushButton(
             "Cancelar"
         )
+        self.cancel_button.setIcon(
+            app_icon("delete", color="#F8D5DC", accent="#FF6B81", size=15)
+        )
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(
             self._cancel_processing
@@ -405,6 +417,9 @@ class ProjectWindow(QMainWindow):
 
         close_button = QPushButton(
             "Voltar ao dashboard"
+        )
+        close_button.setIcon(
+            app_icon("home", color="#EDE9FE", accent="#A855F7", size=16)
         )
         close_button.clicked.connect(
             self._go_home
@@ -441,19 +456,32 @@ class ProjectWindow(QMainWindow):
         description,
         primary=False,
     ):
+        icon_names = {
+            "1": "preview",
+            "2": "podcast",
+            "3": "scissors",
+            "4": "review",
+        }
         button = QPushButton(
-            f"{number}   {title}\n      {description}"
+            f"{title}\n{description}"
         )
-        button.setMinimumHeight(66)
-        button.setStyleSheet(
-            "QPushButton {text-align:left; padding:10px 12px;"
-            "background:#171F3D; border:1px solid #34416F;"
-            "border-radius:11px; color:#F8F8FF; font-weight:700;}"
-            "QPushButton:hover {background:#242F5D;"
-            "border-color:#8B5CF6;}"
-            "QPushButton:disabled {color:#69739A;"
-            "background:#121932; border-color:#263158;}"
+        button.setIcon(
+            app_icon(
+                icon_names.get(str(number), "sparkles"),
+                color="#F4EEFF",
+                accent="#A855F7",
+                size=23,
+            )
         )
+        button.setIconSize(
+            __import__(
+                "PySide6.QtCore",
+                fromlist=["QSize"],
+            ).QSize(23, 23)
+        )
+        button.setMinimumHeight(70)
+        button.setProperty("pipeline", True)
+        button.setProperty("stepNumber", str(number))
         if primary:
             button.setProperty("primary", True)
         return button
@@ -465,12 +493,18 @@ class ProjectWindow(QMainWindow):
         ):
             self.player.pause()
             self.preview_play_button.setText(
-                "▶  Reproduzir"
+                "Reproduzir"
+            )
+            self.preview_play_button.setIcon(
+                app_icon("play", color="#EDE9FE", accent="#A855F7", size=17)
             )
         else:
             self.player.play()
             self.preview_play_button.setText(
-                "Ⅱ  Pausar"
+                "Pausar"
+            )
+            self.preview_play_button.setIcon(
+                app_icon("pause", color="#EDE9FE", accent="#A855F7", size=17)
             )
 
     def _sidebar_nav(self, target):
