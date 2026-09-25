@@ -1041,6 +1041,15 @@ class ReviewWindow(QMainWindow):
         self.mark_in_button.setEnabled(editing_enabled)
         self.mark_out_button.setEnabled(editing_enabled)
 
+        self.aspect_combo.setEnabled(editing_enabled)
+        self.captions_checkbox.setEnabled(editing_enabled)
+        self.caption_style_combo.setEnabled(
+            editing_enabled
+            and self.captions_checkbox.isChecked()
+        )
+        self.auto_zoom_checkbox.setEnabled(editing_enabled)
+        self.analyze_content_button.setEnabled(editing_enabled)
+
         self.remove_selected_button.setEnabled(
             editing_enabled
             and selected_action == "keep"
@@ -1309,6 +1318,14 @@ class ReviewWindow(QMainWindow):
         self.open_folder_button.setEnabled(enabled)
         self.export_combo.setEnabled(enabled)
         self.zoom_slider.setEnabled(enabled)
+        self.aspect_combo.setEnabled(enabled)
+        self.captions_checkbox.setEnabled(enabled)
+        self.caption_style_combo.setEnabled(
+            enabled
+            and self.captions_checkbox.isChecked()
+        )
+        self.auto_zoom_checkbox.setEnabled(enabled)
+        self.analyze_content_button.setEnabled(enabled)
         self.cancel_button.setEnabled(not enabled)
 
         if not enabled:
