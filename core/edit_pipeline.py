@@ -192,6 +192,8 @@ class AutoEditPipeline:
             destination,
             plan,
             cancel=cancel,
+            progress=progress,
+            stage=stage,
         )
 
         check_cancelled(cancel)
@@ -217,6 +219,7 @@ class AutoEditPipeline:
                 "output_path": relative_output,
                 "edit_errors": [],
                 "reused_output": False,
+                "render_encoder": self.renderer.last_encoder.label,
             }
         )
         return results
