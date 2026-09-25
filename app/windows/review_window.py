@@ -1,4 +1,5 @@
 from copy import deepcopy
+import wave
 
 from PySide6.QtCore import QTimer, Qt, QUrl
 from PySide6.QtGui import (
@@ -27,6 +28,7 @@ from app.review_worker import ReviewWorker
 from app.widgets.timeline_widget import TimelineWidget
 from core.edit_pipeline import load_edit_state
 from core.project_manager import ProjectManager
+from media.waveform import load_or_create_waveform
 from editor.review import (
     adjust_removed_segment,
     edited_to_source_ms,
@@ -405,6 +407,16 @@ class ReviewWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self._load_current_preview()
+
+        try:
+            self.timeline.set_waveform(
+                load_or_create_waveform(
+                    self.project_dir
+                )
+            )
+        except (OSError, ValueError, wave.Error, EOFError):
+            pass
+
         self._refresh_summary()
         self._refresh_edit_controls()
 
