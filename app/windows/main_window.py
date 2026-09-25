@@ -670,7 +670,7 @@ class MainWindow(QMainWindow):
 
     def _show_project_window(self, project_dir):
         try:
-            window = ProjectWindow(project_dir)
+            window = ProjectWindow(project_dir, self)
         except ValueError as error:
             QMessageBox.warning(
                 self,
