@@ -34,6 +34,10 @@ class ProjectManager:
         profile,
         style,
         aspect_ratio=None,
+        captions_enabled=False,
+        auto_zoom=False,
+        caption_style="Dinâmica",
+        export_quality="original",
     ):
         name = name.strip()
 
@@ -85,6 +89,13 @@ class ProjectManager:
             "orientation": aspect_definition.orientation,
             "aspect_ratio": aspect_definition.key,
             "status": "created",
+            "review_settings": {
+                "aspect_ratio": aspect_definition.key,
+                "captions_enabled": bool(captions_enabled),
+                "caption_style": str(caption_style),
+                "auto_zoom": bool(auto_zoom),
+            },
+            "preferred_export_profile": str(export_quality),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "source": {
