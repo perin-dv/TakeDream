@@ -19,7 +19,7 @@ COLORS = {
 
 
 REVIEW_STYLESHEET = r"""
-QMainWindow, QWidget#Root {
+QMainWindow, QDialog, QWidget#Root, QWidget#AppPage {
     background: #0B1020;
     color: #F8F8FF;
     font-family: "Segoe UI";
@@ -34,6 +34,41 @@ QWidget {
 QFrame#Sidebar {
     background: #0E1530;
     border-right: 1px solid #252F55;
+}
+
+QFrame#FantasyPromo {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 #24155B,
+        stop:1 #3B1C70
+    );
+    border: 1px solid #7C5CE7;
+    border-radius: 14px;
+}
+
+QFrame#HeroCard {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 #121B3C,
+        stop:0.55 #18224B,
+        stop:1 #2A1754
+    );
+    border: 1px solid #34416F;
+    border-radius: 18px;
+}
+
+QFrame#SoftCard {
+    background: #F7F5FF;
+    border: 1px solid #DDD6FE;
+    border-radius: 16px;
+}
+
+QFrame#SoftCard QLabel {
+    color: #17152A;
+}
+
+QFrame#SoftCard QLabel[muted="true"] {
+    color: #66647A;
 }
 
 QLabel#Brand {
@@ -196,7 +231,8 @@ QPushButton[quality="true"]:checked {
 }
 
 QComboBox,
-QDoubleSpinBox {
+QDoubleSpinBox,
+QLineEdit {
     background: #171F3D;
     border: 1px solid #34416F;
     border-radius: 8px;
@@ -205,7 +241,9 @@ QDoubleSpinBox {
 }
 
 QComboBox:hover,
-QDoubleSpinBox:hover {
+QDoubleSpinBox:hover,
+QLineEdit:hover,
+QLineEdit:focus {
     border-color: #7C5CE7;
 }
 
@@ -295,6 +333,24 @@ QScrollBar::handle:horizontal {
     border-radius: 5px;
 }
 
+QListWidget,
+QTreeWidget,
+QTableWidget {
+    background: #11182F;
+    color: #F8F8FF;
+    border: 1px solid #2B3762;
+    border-radius: 10px;
+    alternate-background-color: #141C39;
+}
+
+QMessageBox {
+    background: #0B1020;
+}
+
+QMessageBox QLabel {
+    color: #F8F8FF;
+}
+
 QToolTip {
     background: #141C39;
     color: #FFFFFF;
@@ -304,5 +360,12 @@ QToolTip {
 """
 
 
+APP_STYLESHEET = REVIEW_STYLESHEET
+
+
 def apply_review_theme(widget):
-    widget.setStyleSheet(REVIEW_STYLESHEET)
+    widget.setStyleSheet(APP_STYLESHEET)
+
+
+def apply_app_theme(widget):
+    widget.setStyleSheet(APP_STYLESHEET)
