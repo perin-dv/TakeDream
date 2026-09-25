@@ -49,6 +49,10 @@ from core.project_manager import ProjectManager
 from core.render_settings import normalize_render_settings
 from media.thumbnails import load_thumbnail_manifest
 from media.waveform import load_or_create_waveform
+from profiles import (
+    get_style_preset,
+    styles_for_profile,
+)
 from editor.review import (
     adjust_removed_segment,
     edited_to_source_ms,
@@ -583,9 +587,17 @@ class ReviewWindow(QMainWindow):
             .strip()
             .lower()
         )
+        available_styles = styles_for_profile(
+            self.project_data.get(
+                "profile",
+                "YouTube",
+            )
+        )
+
         for index, name in enumerate(
-            ("Clean", "Dinâmico", "Premium", "Highlights")
+            available_styles
         ):
+            preset = get_style_preset(name)
             selected = (
                 name.lower() == current_style
                 or (
@@ -596,12 +608,10 @@ class ReviewWindow(QMainWindow):
             style_button = option_button(
                 name,
                 checked=selected,
-                icon_name={
-                    "Clean": "clean",
-                    "Dinâmico": "dynamic",
-                    "Premium": "premium",
-                    "Highlights": "highlights",
-                }.get(name, "sparkles"),
+                icon_name=preset.icon,
+            )
+            style_button.setToolTip(
+                preset.description
             )
             style_button.setEnabled(False)
             style_grid.addWidget(
