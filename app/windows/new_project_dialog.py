@@ -6,6 +6,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
@@ -67,6 +68,23 @@ class NewProjectDialog(QDialog):
         ).aspect_ratio
         self.selected_quality = "original"
 
+        # Hidden compatibility controls keep the original internal contract
+        # available to tests and older code while the visible UI uses cards.
+        self.profile_combo = QComboBox()
+        self.profile_combo.addItems(profile_names())
+        self.profile_combo.hide()
+
+        self.style_combo = QComboBox()
+        self.style_combo.hide()
+
+        self.aspect_combo = QComboBox()
+        for aspect in ASPECT_RATIOS:
+            self.aspect_combo.addItem(aspect.label, aspect.key)
+        self.aspect_combo.hide()
+
+        self.profile_description = QLabel()
+        self.profile_description.hide()
+
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -108,6 +126,7 @@ class NewProjectDialog(QDialog):
 
         close_button = QPushButton("Fechar")
         close_button.clicked.connect(self.reject)
+        self.cancel_button = close_button
         header.addWidget(close_button)
 
         content_layout.addLayout(header)
@@ -164,6 +183,7 @@ class NewProjectDialog(QDialog):
             "QPushButton:hover {border:2px solid #8B5CF6;}"
         )
         self.video_button.clicked.connect(self.select_video)
+        self.select_video_button = self.video_button
         video_box.addWidget(video_label)
         video_box.addWidget(self.video_button)
 
@@ -478,12 +498,20 @@ class NewProjectDialog(QDialog):
     def _set_profile(self, profile):
         self.selected_profile = profile
 
+        profile_index = self.profile_combo.findText(profile)
+        if profile_index >= 0:
+            blocked = self.profile_combo.blockSignals(True)
+            self.profile_combo.setCurrentIndex(profile_index)
+            self.profile_combo.blockSignals(blocked)
+
         for name, button in self.profile_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(name == profile)
             button.blockSignals(blocked)
 
         styles = styles_for_profile(profile)
+        self.style_combo.clear()
+        self.style_combo.addItems(styles)
         self.selected_style = styles[0]
         self._rebuild_style_buttons(styles)
 
@@ -542,6 +570,12 @@ class NewProjectDialog(QDialog):
 
     def _set_style(self, style):
         self.selected_style = style
+
+        style_index = self.style_combo.findText(style)
+        if style_index >= 0:
+            blocked = self.style_combo.blockSignals(True)
+            self.style_combo.setCurrentIndex(style_index)
+            self.style_combo.blockSignals(blocked)
         for name, button in self.style_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(name == style)
@@ -550,6 +584,12 @@ class NewProjectDialog(QDialog):
     def _set_aspect(self, aspect):
         self.selected_aspect = aspect
         self.preview_aspect_label.setText(aspect)
+
+        aspect_index = self.aspect_combo.findData(aspect)
+        if aspect_index >= 0:
+            blocked = self.aspect_combo.blockSignals(True)
+            self.aspect_combo.setCurrentIndex(aspect_index)
+            self.aspect_combo.blockSignals(blocked)
 
         for key, button in self.aspect_buttons.items():
             blocked = button.blockSignals(True)
