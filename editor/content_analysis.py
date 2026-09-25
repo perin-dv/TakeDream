@@ -1,3 +1,4 @@
+from profiles import get_style_preset
 import re
 import unicodedata
 from collections import Counter
@@ -226,7 +227,12 @@ def analyze_content(
                 "text": current_text,
             }
 
-    last_broll_ms = -20000
+    try:
+        preset = get_style_preset(style)
+    except ValueError:
+        preset = get_style_preset("Clean")
+
+    last_broll_ms = -preset.broll_gap_ms
     for index, segment in enumerate(segments):
         start_ms = int(
             segment.get("start_ms", 0)
@@ -241,8 +247,10 @@ def analyze_content(
         keywords = _keywords(text)
 
         if (
-            keywords
-            and start_ms - last_broll_ms >= 15000
+            preset.broll_enabled
+            and keywords
+            and start_ms - last_broll_ms
+            >= preset.broll_gap_ms
             and end_ms > start_ms
         ):
             broll_suggestions.append(
@@ -260,18 +268,10 @@ def analyze_content(
             )
             last_broll_ms = start_ms
 
-    dynamic = str(style).lower() in {
-        "dinâmico",
-        "dinamico",
-        "highlights",
-        "conversão",
-        "conversao",
-    }
-
-    minimum_gap = 9000 if dynamic else 15000
+    minimum_gap = preset.zoom_gap_ms
     last_zoom_ms = -minimum_gap
 
-    if str(profile).lower() != "casamento":
+    if preset.zoom_enabled:
         for index, segment in enumerate(segments):
             start_ms = int(
                 segment.get("start_ms", 0)
@@ -301,11 +301,7 @@ def analyze_content(
                         end_ms,
                         start_ms + 2800,
                     ),
-                    "scale": (
-                        1.07
-                        if dynamic
-                        else 1.04
-                    ),
+                    "scale": preset.zoom_scale,
                     "reason": "speech_emphasis",
                 }
             )
@@ -316,6 +312,13 @@ def analyze_content(
         "engine": "local-semantic-v1",
         "profile": profile,
         "style": style,
+        "style_preset": {
+            "zoom_gap_ms": preset.zoom_gap_ms,
+            "zoom_scale": preset.zoom_scale,
+            "broll_gap_ms": preset.broll_gap_ms,
+            "broll_enabled": preset.broll_enabled,
+            "zoom_enabled": preset.zoom_enabled,
+        },
         "summary": {
             "fillers": len(filler_suggestions),
             "word_repetitions": len(
