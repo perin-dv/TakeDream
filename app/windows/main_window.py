@@ -26,6 +26,7 @@ from app.ui.components import (
 )
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
+from app.ui.windows import enable_dark_title_bar
 from app.windows.new_project_dialog import NewProjectDialog
 from app.windows.project_window import ProjectWindow
 from app.windows.review_window import ReviewWindow
@@ -78,6 +79,7 @@ class MainWindow(QMainWindow):
         self.status_label.hide()
 
         apply_app_theme(self)
+        enable_dark_title_bar(self)
         self._build_all_pages()
         self._navigate("home")
 
