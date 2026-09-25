@@ -273,6 +273,12 @@ class ReviewRenderPipeline:
             settings["aspect_ratio"]
         )
 
+        output_size = getattr(
+            self.renderer,
+            "last_output_size",
+            None,
+        )
+
         self.manager.update_processing(
             root,
             "review_rendered",
@@ -302,13 +308,13 @@ class ReviewRenderPipeline:
             aspect_ratio=aspect.key,
             orientation=aspect.orientation,
             preview_width=(
-                self.renderer.last_output_size[0]
-                if self.renderer.last_output_size
+                output_size[0]
+                if output_size
                 else None
             ),
             preview_height=(
-                self.renderer.last_output_size[1]
-                if self.renderer.last_output_size
+                output_size[1]
+                if output_size
                 else None
             ),
         )
