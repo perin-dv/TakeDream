@@ -11,7 +11,7 @@ from app.ui.components import (
     muted_label,
     nav_button,
 )
-from app.ui.icons import icon_pixmap
+from app.ui.icons import app_icon, icon_pixmap
 
 
 class TakeDreamSidebar(QFrame):
@@ -137,10 +137,7 @@ class TakeDreamSidebar(QFrame):
                 name == key,
             )
             button.setIcon(
-                __import__(
-                    "app.ui.icons",
-                    fromlist=["app_icon"],
-                ).app_icon(
+                app_icon(
                     {
                         "home": "home",
                         "new": "plus",
