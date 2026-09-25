@@ -17,6 +17,7 @@ class TimelineWidget(QWidget):
         self._playhead_source_ms = 0
         self._zoom = 1.0
         self._base_width = 1080
+        self._waveform = []
         self.setMinimumHeight(98)
         self.setMouseTracking(True)
         self._apply_zoom()
@@ -45,6 +46,10 @@ class TimelineWidget(QWidget):
         self.setMinimumWidth(width)
         self.resize(width, max(self.height(), 98))
         self.updateGeometry()
+        self.update()
+
+    def set_waveform(self, peaks):
+        self._waveform = list(peaks or [])
         self.update()
 
     def set_playhead_source_ms(self, value):
@@ -93,6 +98,27 @@ class TimelineWidget(QWidget):
         duration = self._plan["source_duration_ms"]
         if duration <= 0:
             return
+
+        if self._waveform:
+            center_y = area.center().y()
+            half_height = area.height() * 0.42
+            painter.setPen(QPen(QColor(255, 255, 255, 115), 1))
+
+            count = len(self._waveform)
+            for wave_index, peak in enumerate(self._waveform):
+                x = area.left() + (
+                    area.width() * wave_index / max(1, count - 1)
+                )
+                amplitude = (
+                    max(0, min(int(peak), 1000))
+                    / 1000
+                ) * half_height
+                painter.drawLine(
+                    int(x),
+                    int(center_y - amplitude),
+                    int(x),
+                    int(center_y + amplitude),
+                )
 
         for index, segment in enumerate(self._plan["segments"]):
             start_ratio = segment["start_ms"] / duration
