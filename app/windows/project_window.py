@@ -431,6 +431,8 @@ class ProjectWindow(QMainWindow):
         content_layout.addWidget(footer_card)
 
         page_scroll = QScrollArea()
+        page_scroll.setObjectName("AppPageScroll")
+        page_scroll.viewport().setObjectName("AppPageViewport")
         page_scroll.setWidgetResizable(True)
         page_scroll.setWidget(content)
         page_scroll.setFrameShape(QFrame.Shape.NoFrame)
