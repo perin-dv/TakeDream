@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtCore import QSize, QTimer, QUrl, Qt
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -473,12 +473,7 @@ class ProjectWindow(QMainWindow):
                 size=23,
             )
         )
-        button.setIconSize(
-            __import__(
-                "PySide6.QtCore",
-                fromlist=["QSize"],
-            ).QSize(23, 23)
-        )
+        button.setIconSize(QSize(23, 23))
         button.setMinimumHeight(70)
         button.setProperty("pipeline", True)
         button.setProperty("stepNumber", str(number))
