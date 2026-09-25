@@ -106,21 +106,20 @@ def analyze_content(
         )
 
     filler_suggestions = []
+    word_repetition_suggestions = []
     repetition_suggestions = []
     broll_suggestions = []
     zoom_events = []
 
     for segment_index, segment in enumerate(segments):
+        previous_word = None
+
         for word_index, word in enumerate(
             _segment_words(segment)
         ):
             normalized = _normalize(
                 _word_text(word)
             )
-
-            if normalized not in FILLERS:
-                continue
-
             start_ms = _timestamp(word, "start_ms")
             end_ms = _timestamp(word, "end_ms")
 
@@ -129,23 +128,50 @@ def analyze_content(
                 or end_ms is None
                 or end_ms <= start_ms
             ):
+                previous_word = normalized or previous_word
                 continue
 
-            filler_suggestions.append(
-                {
-                    "type": "filler",
-                    "segment_id": segment.get(
-                        "id",
-                        segment_index,
-                    ),
-                    "word_index": word_index,
-                    "start_ms": start_ms,
-                    "end_ms": end_ms,
-                    "text": _word_text(word).strip(),
-                    "confidence": 0.9,
-                    "suggested_action": "review_remove",
-                }
-            )
+            if normalized in FILLERS:
+                filler_suggestions.append(
+                    {
+                        "type": "filler",
+                        "segment_id": segment.get(
+                            "id",
+                            segment_index,
+                        ),
+                        "word_index": word_index,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "text": _word_text(word).strip(),
+                        "confidence": 0.9,
+                        "suggested_action": "review_remove",
+                    }
+                )
+
+            if (
+                normalized
+                and normalized == previous_word
+                and normalized not in FILLERS
+                and len(normalized) > 1
+            ):
+                word_repetition_suggestions.append(
+                    {
+                        "type": "word_repetition",
+                        "segment_id": segment.get(
+                            "id",
+                            segment_index,
+                        ),
+                        "word_index": word_index,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "text": _word_text(word).strip(),
+                        "confidence": 0.88,
+                        "suggested_action": "review_remove",
+                    }
+                )
+
+            if normalized:
+                previous_word = normalized
 
     previous = None
 
@@ -292,6 +318,9 @@ def analyze_content(
         "style": style,
         "summary": {
             "fillers": len(filler_suggestions),
+            "word_repetitions": len(
+                word_repetition_suggestions
+            ),
             "possible_repetitions": len(
                 repetition_suggestions
             ),
@@ -302,6 +331,7 @@ def analyze_content(
         },
         "speech_suggestions": (
             filler_suggestions
+            + word_repetition_suggestions
             + repetition_suggestions
         ),
         "broll_suggestions": broll_suggestions,
