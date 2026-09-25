@@ -99,27 +99,6 @@ class TimelineWidget(QWidget):
         if duration <= 0:
             return
 
-        if self._waveform:
-            center_y = area.center().y()
-            half_height = area.height() * 0.42
-            painter.setPen(QPen(QColor(255, 255, 255, 115), 1))
-
-            count = len(self._waveform)
-            for wave_index, peak in enumerate(self._waveform):
-                x = area.left() + (
-                    area.width() * wave_index / max(1, count - 1)
-                )
-                amplitude = (
-                    max(0, min(int(peak), 1000))
-                    / 1000
-                ) * half_height
-                painter.drawLine(
-                    int(x),
-                    int(center_y - amplitude),
-                    int(x),
-                    int(center_y + amplitude),
-                )
-
         for index, segment in enumerate(self._plan["segments"]):
             start_ratio = segment["start_ms"] / duration
             end_ratio = segment["end_ms"] / duration
@@ -155,6 +134,31 @@ class TimelineWidget(QWidget):
             if index == self._selected_index:
                 painter.setPen(QPen(QColor("#ffffff"), 2))
                 painter.drawRect(rect)
+
+        if self._waveform:
+            center_y = area.center().y()
+            half_height = area.height() * 0.42
+            painter.setPen(
+                QPen(QColor(255, 255, 255, 155), 1)
+            )
+
+            count = len(self._waveform)
+            for wave_index, peak in enumerate(self._waveform):
+                x = area.left() + (
+                    area.width()
+                    * wave_index
+                    / max(1, count - 1)
+                )
+                amplitude = (
+                    max(0, min(int(peak), 1000))
+                    / 1000
+                ) * half_height
+                painter.drawLine(
+                    int(x),
+                    int(center_y - amplitude),
+                    int(x),
+                    int(center_y + amplitude),
+                )
 
         playhead_ratio = self._playhead_source_ms / duration
         playhead_x = area.left() + area.width() * playhead_ratio
