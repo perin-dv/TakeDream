@@ -431,20 +431,20 @@ class FFmpegRenderer:
                 even(output_height),
             )
 
-        self.last_output_size = (
-            output_size
-            or target_dimensions(
+        if output_size is not None:
+            self.last_output_size = output_size
+        elif target_aspect_ratio:
+            self.last_output_size = target_dimensions(
                 source_width,
                 source_height,
                 target_aspect_ratio,
                 short_side=None,
             )
-            if target_aspect_ratio
-            else (
+        else:
+            self.last_output_size = (
                 source_width,
                 source_height,
             )
-        )
 
         destination.parent.mkdir(
             parents=True,
