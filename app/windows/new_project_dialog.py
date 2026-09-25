@@ -53,8 +53,11 @@ PROFILE_ICONS = {
 
 
 class NewProjectDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, embedded=False, host=None):
         super().__init__(parent)
+
+        self.embedded = embedded
+        self.host = host
 
         self.setWindowTitle("TakeDream — Novo Projeto")
         self.resize(1360, 840)
@@ -125,8 +128,8 @@ class NewProjectDialog(QDialog):
         header.addLayout(header_text)
         header.addStretch(1)
 
-        close_button = QPushButton("Fechar")
-        close_button.clicked.connect(self.reject)
+        close_button = QPushButton("Voltar" if embedded else "Fechar")
+        close_button.clicked.connect(self._close_page)
         self.cancel_button = close_button
         header.addWidget(close_button)
 
@@ -610,10 +613,24 @@ class NewProjectDialog(QDialog):
         if target == "new":
             return
 
+        if self.host is not None and hasattr(self.host, "_navigate"):
+            self.player.stop()
+            self.host._navigate(target)
+            return
+
         parent = self.parent()
         if parent is not None and hasattr(parent, "_navigate"):
             self.reject()
             parent._navigate(target)
+
+    def _close_page(self):
+        self.player.stop()
+
+        if self.embedded and self.host is not None:
+            self.host._navigate("home")
+            return
+
+        self.reject()
 
     def select_video(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -669,6 +686,13 @@ class NewProjectDialog(QDialog):
             return
 
         self.player.stop()
+
+        if self.embedded and self.host is not None:
+            self.host._create_project_from_data(
+                self.project_data()
+            )
+            return
+
         self.accept()
 
     def reject(self):
