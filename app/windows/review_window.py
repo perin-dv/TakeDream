@@ -40,6 +40,7 @@ from app.ui.components import (
 )
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_review_theme
+from app.ui.windows import enable_dark_title_bar
 from app.widgets.timeline_widget import TimelineWidget
 from core.content_pipeline import load_content_analysis
 from core.edit_pipeline import load_edit_state
@@ -864,6 +865,7 @@ class ReviewWindow(QMainWindow):
         )
 
         apply_review_theme(self)
+        enable_dark_title_bar(self)
 
         self._load_current_preview()
 
