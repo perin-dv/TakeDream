@@ -208,6 +208,11 @@ class AutoEditPipeline:
             edit_cuts=plan["stats"]["cuts"],
             original_duration_ms=plan["source_duration_ms"],
             edited_duration_ms=plan["stats"]["estimated_duration_ms"],
+            render_encoder=getattr(
+                getattr(self.renderer, "last_encoder", None),
+                "label",
+                "Desconhecido",
+            ),
         )
 
         progress(100)
