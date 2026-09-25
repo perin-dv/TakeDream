@@ -237,9 +237,9 @@ class ReviewWindow(QMainWindow):
         self._refresh_content_summary()
 
         legend = QLabel(
-            "Timeline do original: verde = mantido • "
-            "vermelho = removido • borda amarela = ajuste manual. "
-            "Clique para selecionar e posicionar."
+            "Timeline: verde = mantido • vermelho = removido • "
+            "borda amarela = ajuste manual • laranja = fala • "
+            "azul = B-roll • roxo = zoom. Clique para selecionar."
         )
         legend.setWordWrap(True)
 
@@ -262,6 +262,9 @@ class ReviewWindow(QMainWindow):
 
         self.timeline = TimelineWidget()
         self.timeline.set_plan(self.plan)
+        self.timeline.set_content_analysis(
+            self.content_analysis
+        )
         self.timeline.segmentSelected.connect(
             self._select_segment
         )
@@ -1266,6 +1269,9 @@ class ReviewWindow(QMainWindow):
         elif "content_analysis" in result:
             self.content_analysis = (
                 result["content_analysis"]
+            )
+            self.timeline.set_content_analysis(
+                self.content_analysis
             )
             thumbnails = result.get(
                 "thumbnail_paths",
