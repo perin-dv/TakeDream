@@ -59,6 +59,11 @@ class NewProjectDialog(QDialog):
         self.embedded = embedded
         self.host = host
 
+        if embedded:
+            self.setWindowFlags(
+                Qt.WindowType.Widget
+            )
+
         self.setWindowTitle("TakeDream — Novo Projeto")
         self.resize(1360, 840)
         self.setMinimumSize(1120, 720)
@@ -452,7 +457,8 @@ class NewProjectDialog(QDialog):
         root.addWidget(content, 1)
 
         apply_app_theme(self)
-        enable_dark_title_bar(self)
+        if not embedded:
+            enable_dark_title_bar(self)
         self._set_profile(self.selected_profile)
 
     def _numbered_title(self, number, title, subtitle=None):
