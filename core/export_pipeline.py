@@ -150,6 +150,8 @@ class ExportPipeline:
                 crf=profile.crf,
                 audio_bitrate=profile.audio_bitrate,
                 preset=profile.preset,
+                progress=progress,
+                stage=stage,
             )
             export_mode = "render"
 
@@ -162,6 +164,15 @@ class ExportPipeline:
             last_export_path=relative_output,
             last_export_profile=profile.key,
             last_export_mode=export_mode,
+            last_export_encoder=(
+                getattr(
+                    getattr(self.renderer, "last_encoder", None),
+                    "label",
+                    "Desconhecido",
+                )
+                if export_mode == "render"
+                else "Smart Copy"
+            ),
         )
 
         progress(100)
@@ -172,4 +183,9 @@ class ExportPipeline:
             "export_profile": profile.key,
             "export_label": profile.label,
             "export_mode": export_mode,
+            "render_encoder": (
+                getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido")
+                if export_mode == "render"
+                else "Smart Copy"
+            ),
         }

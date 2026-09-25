@@ -368,7 +368,11 @@ class ReviewWindow(QMainWindow):
             self.position_slider.setEnabled(True)
             self.export_button.setEnabled(True)
             self.selection_label.setText("Nova prévia gerada com os ajustes.")
-            self.status_label.setText("Nova prévia pronta para revisão.")
+            encoder = result.get("render_encoder")
+            self.status_label.setText(
+                "Nova prévia pronta para revisão."
+                + (f" Render: {encoder}." if encoder else "")
+            )
             QTimer.singleShot(0, self._load_current_preview)
             self._refresh_summary()
 
@@ -381,7 +385,8 @@ class ReviewWindow(QMainWindow):
                 "Vídeo exportado",
                 f"Vídeo final criado com sucesso.\n\n"
                 f"Qualidade: {result['export_label']}\n"
-                f"Arquivo: {result['export_path']}",
+                f"Arquivo: {result['export_path']}\n"
+                f"Processamento: {result.get('render_encoder', '—')}",
             )
 
         self._set_progress(100)

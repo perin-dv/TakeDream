@@ -68,6 +68,8 @@ class ReviewRenderPipeline:
             destination,
             edit_plan,
             cancel=cancel,
+            progress=progress,
+            stage=stage,
         )
 
         check_cancelled(cancel)
@@ -84,6 +86,11 @@ class ReviewRenderPipeline:
             edit_cuts=edit_plan["stats"]["cuts"],
             original_duration_ms=edit_plan["source_duration_ms"],
             edited_duration_ms=edit_plan["stats"]["estimated_duration_ms"],
+            render_encoder=getattr(
+                getattr(self.renderer, "last_encoder", None),
+                "label",
+                "Desconhecido",
+            ),
         )
 
         progress(100)
@@ -92,4 +99,5 @@ class ReviewRenderPipeline:
         return {
             "edit_plan": edit_plan,
             "output_path": relative_output,
+            "render_encoder": getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido"),
         }

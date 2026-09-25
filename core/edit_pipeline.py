@@ -192,6 +192,8 @@ class AutoEditPipeline:
             destination,
             plan,
             cancel=cancel,
+            progress=progress,
+            stage=stage,
         )
 
         check_cancelled(cancel)
@@ -206,6 +208,11 @@ class AutoEditPipeline:
             edit_cuts=plan["stats"]["cuts"],
             original_duration_ms=plan["source_duration_ms"],
             edited_duration_ms=plan["stats"]["estimated_duration_ms"],
+            render_encoder=getattr(
+                getattr(self.renderer, "last_encoder", None),
+                "label",
+                "Desconhecido",
+            ),
         )
 
         progress(100)
@@ -217,6 +224,7 @@ class AutoEditPipeline:
                 "output_path": relative_output,
                 "edit_errors": [],
                 "reused_output": False,
+                "render_encoder": getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido"),
             }
         )
         return results

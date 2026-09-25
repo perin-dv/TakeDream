@@ -177,9 +177,17 @@ class AutoRenderIntegrationTests(unittest.TestCase):
 
             tools = FFmpegTools()
             renderer = FFmpegRenderer(tools)
-            renderer.render(source, destination, plan)
+            progress_values = []
+            renderer.render(
+                source,
+                destination,
+                plan,
+                progress=progress_values.append,
+            )
 
             self.assertTrue(destination.exists())
+            self.assertTrue(progress_values)
+            self.assertEqual(progress_values[-1], 100)
             metadata = tools.probe(destination)
             duration = metadata["container"]["duration_seconds"]
 

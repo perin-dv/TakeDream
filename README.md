@@ -123,6 +123,28 @@ O export final sempre usa o vídeo original e o plano de edição atual. Se a re
 escolhida for maior que a origem, o TakeDream mantém a resolução original em vez de
 fazer upscale artificial.
 
+## Aceleração de render e progresso
+
+Quando uma etapa precisa recodificar vídeo, o TakeDream tenta automaticamente um
+encoder H.264 por hardware antes de usar CPU. A ordem atual é:
+
+1. NVIDIA NVENC;
+2. Intel Quick Sync;
+3. AMD AMF;
+4. fallback seguro para `libx264` na CPU.
+
+Não basta o encoder existir no build do FFmpeg: o TakeDream faz um pequeno teste
+real antes de escolhê-lo. Se a GPU falhar durante o vídeo real, a renderização
+recomeça automaticamente pela CPU.
+
+As renderizações via FFmpeg também usam `-progress pipe:1`, então a barra passa a
+mostrar progresso de 0 a 100 com base na duração estimada do vídeo final. O
+cancelamento continua responsivo durante a leitura do progresso.
+
+Exportações `Original` ou sem necessidade de reduzir resolução continuam usando
+**Smart Copy** da prévia aprovada, sem recodificar novamente. O `project.json`
+registra qual encoder ou modo foi usado na última renderização/exportação.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.
