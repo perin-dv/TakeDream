@@ -36,6 +36,7 @@ from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
 from profiles import (
+    get_edit_rules,
     get_profile_definition,
     get_style_preset,
     profile_names,
@@ -499,6 +500,35 @@ class NewProjectDialog(QDialog):
 
         right_layout.addWidget(settings_card, 2)
 
+        style_summary_card = card()
+        style_summary_layout = QVBoxLayout(
+            style_summary_card
+        )
+        style_summary_layout.setContentsMargins(
+            12,
+            11,
+            12,
+            11,
+        )
+        style_summary_layout.setSpacing(5)
+        style_summary_layout.addWidget(
+            section_title(
+                "Como o TakeDream vai editar",
+                "ai",
+            )
+        )
+
+        self.style_summary_label = QLabel()
+        self.style_summary_label.setProperty(
+            "muted",
+            True,
+        )
+        self.style_summary_label.setWordWrap(True)
+        style_summary_layout.addWidget(
+            self.style_summary_label
+        )
+        right_layout.addWidget(style_summary_card)
+
         self.create_button = QPushButton("Criar Projeto")
         self.create_button.setIcon(app_icon("sparkles", color="#FFFFFF", accent="#FFFFFF", size=18))
         self.create_button.setProperty("primary", True)
@@ -680,6 +710,41 @@ class NewProjectDialog(QDialog):
                 preset.auto_zoom
             )
             self.auto_zoom_checkbox.blockSignals(blocked)
+
+        if hasattr(self, "style_summary_label"):
+            rules = get_edit_rules(
+                self.selected_profile,
+                style,
+            )
+            silence = (
+                f"{rules.minimum_silence_ms / 1000:.2f}s"
+                if rules.automatic_silence_cuts
+                else "desativado"
+            )
+            zoom = (
+                f"{preset.zoom_scale:.2f}x a cada ~"
+                f"{preset.zoom_gap_ms // 1000}s"
+                if preset.zoom_enabled
+                else "desativado"
+            )
+            broll = (
+                f"~{preset.broll_gap_ms // 1000}s"
+                if preset.broll_enabled
+                else "desativado"
+            )
+            captions = (
+                preset.caption_style
+                if preset.captions_enabled
+                else "opcional"
+            )
+
+            self.style_summary_label.setText(
+                f"{preset.description}. "
+                f"Pausa mínima: {silence} • "
+                f"Zoom: {zoom} • "
+                f"Legenda: {captions} • "
+                f"B-roll sugerido: {broll}."
+            )
 
     def _set_aspect(self, aspect):
         self.selected_aspect = aspect
