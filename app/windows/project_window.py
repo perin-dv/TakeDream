@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -82,6 +83,7 @@ class ProjectWindow(QMainWindow):
 
         content = QWidget()
         content.setObjectName("AppPage")
+        content.setMinimumWidth(1030)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(22, 20, 22, 18)
         content_layout.setSpacing(14)
@@ -428,7 +430,18 @@ class ProjectWindow(QMainWindow):
 
         content_layout.addWidget(footer_card)
 
-        root_layout.addWidget(content, 1)
+        page_scroll = QScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setWidget(content)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        page_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        root_layout.addWidget(page_scroll, 1)
         self.setCentralWidget(root)
 
         apply_app_theme(self)
