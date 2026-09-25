@@ -3,7 +3,11 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from profiles import get_profile_definition
+from profiles import (
+    get_edit_rules,
+    get_profile_definition,
+    get_style_preset,
+)
 from renderer.formats import get_aspect_ratio
 
 from core.storage import write_json
@@ -34,9 +38,9 @@ class ProjectManager:
         profile,
         style,
         aspect_ratio=None,
-        captions_enabled=False,
-        auto_zoom=False,
-        caption_style="Dinâmica",
+        captions_enabled=None,
+        auto_zoom=None,
+        caption_style=None,
         export_quality="original",
     ):
         name = name.strip()
@@ -73,6 +77,20 @@ class ProjectManager:
             (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
         profile_definition = get_profile_definition(profile)
+        get_edit_rules(profile, style)
+        style_preset = get_style_preset(style)
+
+        if captions_enabled is None:
+            captions_enabled = (
+                style_preset.captions_enabled
+            )
+        if auto_zoom is None:
+            auto_zoom = style_preset.auto_zoom
+        if caption_style is None:
+            caption_style = (
+                style_preset.caption_style
+            )
+
         selected_aspect = (
             aspect_ratio
             or profile_definition.aspect_ratio
