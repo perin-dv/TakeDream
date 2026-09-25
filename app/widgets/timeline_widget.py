@@ -60,7 +60,7 @@ class TimelineWidget(QWidget):
     def _apply_zoom_width(self):
         self.setMinimumWidth(int(self._base_width * self._zoom_factor))
         self.resize(
-            max(self.width(), self.minimumWidth()),
+            self.minimumWidth(),
             max(self.height(), self.minimumHeight()),
         )
 
