@@ -1005,7 +1005,9 @@ class ReviewWindow(QMainWindow):
         self.content_summary_label.setText(
             "Análise V1 • "
             f"Hesitações: {summary.get('fillers', 0)} • "
-            "Repetições prováveis: "
+            "Palavras repetidas: "
+            f"{summary.get('word_repetitions', 0)} • "
+            "Frases repetidas: "
             f"{summary.get('possible_repetitions', 0)} • "
             f"B-roll: {summary.get('broll_suggestions', 0)} • "
             f"Zooms: {summary.get('zoom_events', 0)}"
