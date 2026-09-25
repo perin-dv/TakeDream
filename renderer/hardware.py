@@ -9,7 +9,6 @@ class H264Encoder:
     key: str
     label: str
     codec: str
-    quality_args: tuple[str, ...]
     hardware: bool
 
 
@@ -17,7 +16,6 @@ CPU_ENCODER = H264Encoder(
     key="cpu",
     label="CPU / libx264",
     codec="libx264",
-    quality_args=(),
     hardware=False,
 )
 
@@ -26,21 +24,18 @@ GPU_ENCODERS = (
         key="nvenc",
         label="NVIDIA NVENC",
         codec="h264_nvenc",
-        quality_args=("-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "0"),
         hardware=True,
     ),
     H264Encoder(
         key="qsv",
         label="Intel Quick Sync",
         codec="h264_qsv",
-        quality_args=("-preset", "veryfast", "-global_quality", "20"),
         hardware=True,
     ),
     H264Encoder(
         key="amf",
         label="AMD AMF",
         codec="h264_amf",
-        quality_args=("-quality", "speed", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20"),
         hardware=True,
     ),
 )
@@ -108,23 +103,59 @@ def select_h264_encoder(ffmpeg_path, cancel=None):
     return CPU_ENCODER
 
 
-def cpu_encoder_args(*, preset, crf):
+def cpu_encoder_args(*, preset, quality):
     return [
         "-c:v",
         CPU_ENCODER.codec,
         "-preset",
         str(preset),
         "-crf",
-        str(int(crf)),
+        str(int(quality)),
     ]
 
 
-def hardware_encoder_args(encoder):
+def hardware_encoder_args(encoder, *, quality):
     if not encoder.hardware:
         raise ValueError("Encoder informado não é de hardware.")
 
-    return [
-        "-c:v",
-        encoder.codec,
-        *encoder.quality_args,
-    ]
+    quality = int(quality)
+
+    if encoder.key == "nvenc":
+        return [
+            "-c:v",
+            encoder.codec,
+            "-preset",
+            "p4",
+            "-rc",
+            "vbr",
+            "-cq",
+            str(quality),
+            "-b:v",
+            "0",
+        ]
+
+    if encoder.key == "qsv":
+        return [
+            "-c:v",
+            encoder.codec,
+            "-preset",
+            "veryfast",
+            "-global_quality",
+            str(quality),
+        ]
+
+    if encoder.key == "amf":
+        return [
+            "-c:v",
+            encoder.codec,
+            "-quality",
+            "speed",
+            "-rc",
+            "cqp",
+            "-qp_i",
+            str(quality),
+            "-qp_p",
+            str(quality),
+        ]
+
+    raise ValueError(f"Encoder de hardware desconhecido: {encoder.key}")
