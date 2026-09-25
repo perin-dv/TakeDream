@@ -18,7 +18,7 @@ class TimelineWidget(QWidget):
         self._zoom = 1.0
         self._base_width = 1080
         self._waveform = []
-        self.setMinimumHeight(98)
+        self.setFixedHeight(98)
         self.setMouseTracking(True)
         self._apply_zoom()
 
@@ -43,8 +43,7 @@ class TimelineWidget(QWidget):
 
     def _apply_zoom(self):
         width = int(self._base_width * self._zoom)
-        self.setMinimumWidth(width)
-        self.resize(width, max(self.height(), 98))
+        self.setFixedWidth(width)
         self.updateGeometry()
         self.update()
 
