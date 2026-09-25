@@ -145,6 +145,43 @@ Exportações `Original` ou sem necessidade de reduzir resolução continuam usa
 **Smart Copy** da prévia aprovada, sem recodificar novamente. O `project.json`
 registra qual encoder ou modo foi usado na última renderização/exportação.
 
+## Editor V2 e perfis
+
+A revisão possui uma timeline editável antes da exportação final:
+
+- zoom horizontal de 1x a 10x;
+- waveform do áudio extraído;
+- seleção precisa de trechos;
+- dividir no cursor;
+- remover/restaurar um trecho;
+- marcar entrada/saída e remover um intervalo;
+- ajustar início/fim de um corte em passos de 50 ms;
+- desfazer/refazer com botões ou `Ctrl+Z` / `Ctrl+Y`;
+- várias alterações podem ser acumuladas antes de gerar uma nova prévia.
+
+Perfis registrados:
+
+- YouTube: Dinâmico / Clean;
+- Shorts / Reels / TikTok: Dinâmico / Clean;
+- Podcast: Conversa / Clean;
+- Gaming: Dinâmico / Highlights;
+- Curso: Didático / Clean;
+- VSL: Conversão / Clean;
+- Institucional: Premium / Clean;
+- Casamento: Highlight / Cinematográfico.
+
+Todos usam a mesma infraestrutura de projeto, análise, timeline e render. Nesta fase,
+os perfis não-YouTube usam regras iniciais de pausa adequadas ao ritmo esperado.
+`Casamento` é deliberadamente conservador e não remove silêncio automaticamente;
+a lógica de eventos, multicâmera, votos, beijo e seleção de câmera entra em um
+milestone especializado.
+
+Projetos novos também guardam orientação e proporção base (`16:9` ou `9:16`).
+O perfil vertical já fica preparado para reframing futuro, mas ainda não faz crop
+ou tracking automático.
+
+Exportações disponíveis: `Original`, `1080p`, `720p`, `480p` e `360p`.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.
