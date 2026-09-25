@@ -481,6 +481,7 @@ class ReviewWindow(QMainWindow):
         self._mark_in_ms = None
         self._mark_out_ms = None
         self._refresh_mark_label()
+        self._refresh_controls()
 
     def _apply_plan_change(self, new_plan, message, selected_index=None):
         self._undo_stack.append(deepcopy(self.plan))
