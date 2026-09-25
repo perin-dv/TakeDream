@@ -509,6 +509,8 @@ class NewProjectDialog(QDialog):
         content_layout.addLayout(columns, 1)
 
         page_scroll = QScrollArea()
+        page_scroll.setObjectName("AppPageScroll")
+        page_scroll.viewport().setObjectName("AppPageViewport")
         page_scroll.setWidgetResizable(True)
         page_scroll.setWidget(content)
         page_scroll.setFrameShape(QFrame.Shape.NoFrame)
