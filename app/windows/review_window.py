@@ -143,6 +143,7 @@ class ReviewWindow(QMainWindow):
         # MAIN CONTENT WRAPPER
         # ==============================================================
         content = QWidget()
+        content.setMinimumWidth(1160)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(18, 18, 18, 16)
         content_layout.setSpacing(14)
@@ -919,8 +920,19 @@ class ReviewWindow(QMainWindow):
             alignment=Qt.AlignmentFlag.AlignRight,
         )
 
+        page_scroll = QScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setWidget(content)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        page_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
         root_layout.addWidget(self.sidebar)
-        root_layout.addWidget(content, 1)
+        root_layout.addWidget(page_scroll, 1)
         self.setCentralWidget(root)
 
         self.undo_shortcut = QShortcut(
