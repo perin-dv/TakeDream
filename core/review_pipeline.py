@@ -86,6 +86,11 @@ class ReviewRenderPipeline:
             edit_cuts=edit_plan["stats"]["cuts"],
             original_duration_ms=edit_plan["source_duration_ms"],
             edited_duration_ms=edit_plan["stats"]["estimated_duration_ms"],
+            render_encoder=getattr(
+                getattr(self.renderer, "last_encoder", None),
+                "label",
+                "Desconhecido",
+            ),
         )
 
         progress(100)
