@@ -19,6 +19,7 @@ class TimelineWidget(QWidget):
         self._base_width = 1080
         self._waveform = []
         self._thumbnails = []
+        self._content_analysis = None
         self.setFixedHeight(98)
         self.setMouseTracking(True)
         self._apply_zoom()
@@ -61,6 +62,14 @@ class TimelineWidget(QWidget):
                 thumbnails.append(pixmap)
 
         self._thumbnails = thumbnails
+        self.update()
+
+    def set_content_analysis(self, analysis):
+        self._content_analysis = (
+            analysis
+            if isinstance(analysis, dict)
+            else None
+        )
         self.update()
 
     def set_playhead_source_ms(self, value):
@@ -202,6 +211,55 @@ class TimelineWidget(QWidget):
                     int(x),
                     int(center_y + amplitude),
                 )
+
+        if self._content_analysis:
+            marker_groups = (
+                (
+                    self._content_analysis.get(
+                        "speech_suggestions",
+                        [],
+                    ),
+                    QColor("#ff9f1c"),
+                ),
+                (
+                    self._content_analysis.get(
+                        "broll_suggestions",
+                        [],
+                    ),
+                    QColor("#3a86ff"),
+                ),
+                (
+                    self._content_analysis.get(
+                        "zoom_events",
+                        [],
+                    ),
+                    QColor("#c77dff"),
+                ),
+            )
+
+            for items, marker_color in marker_groups:
+                painter.setPen(
+                    QPen(marker_color, 2)
+                )
+                for item in items:
+                    start_ms = item.get(
+                        "start_ms"
+                    )
+                    if type(start_ms) is not int:
+                        continue
+                    ratio = (
+                        start_ms / duration
+                    )
+                    x = (
+                        area.left()
+                        + area.width() * ratio
+                    )
+                    painter.drawLine(
+                        int(x),
+                        area.top(),
+                        int(x),
+                        area.top() + 12,
+                    )
 
         playhead_ratio = self._playhead_source_ms / duration
         playhead_x = area.left() + area.width() * playhead_ratio
