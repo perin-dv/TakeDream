@@ -12,6 +12,9 @@ from media.thumbnails import (
 
 
 CONTENT_ANALYSIS_PATH = "analysis/content_analysis.json"
+SPEECH_SUGGESTIONS_PATH = "analysis/speech_suggestions.json"
+BROLL_SUGGESTIONS_PATH = "analysis/broll_suggestions.json"
+ZOOM_PLAN_PATH = "analysis/zoom_plan.json"
 TRANSCRIPT_PATH = "transcription/transcript.json"
 
 
@@ -102,6 +105,33 @@ class ContentPipeline:
             root / CONTENT_ANALYSIS_PATH,
             analysis,
         )
+        write_json(
+            root / SPEECH_SUGGESTIONS_PATH,
+            {
+                "schema_version": "0.1",
+                "items": analysis[
+                    "speech_suggestions"
+                ],
+            },
+        )
+        write_json(
+            root / BROLL_SUGGESTIONS_PATH,
+            {
+                "schema_version": "0.1",
+                "items": analysis[
+                    "broll_suggestions"
+                ],
+            },
+        )
+        write_json(
+            root / ZOOM_PLAN_PATH,
+            {
+                "schema_version": "0.1",
+                "items": analysis[
+                    "zoom_events"
+                ],
+            },
+        )
 
         progress(35)
 
@@ -168,6 +198,13 @@ class ContentPipeline:
             content_analysis_engine=(
                 analysis["engine"]
             ),
+            speech_suggestions_path=(
+                SPEECH_SUGGESTIONS_PATH
+            ),
+            broll_suggestions_path=(
+                BROLL_SUGGESTIONS_PATH
+            ),
+            zoom_plan_path=ZOOM_PLAN_PATH,
         )
 
         progress(100)
