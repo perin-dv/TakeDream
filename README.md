@@ -248,6 +248,60 @@ da timeline e preservando sincronismo de áudio.
 A exportação final mantém os perfis de qualidade `Original`, `1080p`, `720p`,
 `480p` e `360p`, respeitando o formato salvo na última prévia aprovada.
 
+## Redesign global TakeDream
+
+A interface desktop usa agora um único sistema visual reutilizável em
+`app/ui/`, com identidade navy/roxo, cards, sidebar, botões principais,
+seletores e estados consistentes.
+
+O redesign cobre:
+
+- Home/dashboard;
+- Novo Projeto;
+- Projetos;
+- workspace de processamento do projeto;
+- Revisão;
+- Exportações;
+- Configurações.
+
+A tela inicial antiga com apenas `Novo Projeto` e `Abrir Projeto` não é mais
+a experiência principal.
+
+### Home
+
+O dashboard mostra:
+
+- ação principal para novo projeto;
+- fluxo rápido Transcrever → Cortar → Revisar → Exportar;
+- projetos recentes;
+- exportações recentes.
+
+### Novo Projeto
+
+A criação do projeto permite escolher visualmente:
+
+- perfil;
+- estilo;
+- formato `16:9`, `9:16`, `1:1` ou `4:5`;
+- qualidade preferida `Original`, `1080p`, `720p`, `480p` ou `360p`;
+- legendas automáticas;
+- zoom automático;
+- preview do vídeo escolhido.
+
+Essas preferências são persistidas no `project.json`.
+
+### Workspace do projeto
+
+O processamento foi reorganizado visualmente em quatro etapas:
+
+1. analisar vídeo;
+2. transcrever/analisar áudio;
+3. gerar primeira edição;
+4. revisar na timeline.
+
+Toda a lógica de processamento continua sendo a mesma; o redesign troca a
+experiência visual sem criar mocks de processamento.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.
