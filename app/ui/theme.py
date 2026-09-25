@@ -362,6 +362,23 @@ QScrollArea {
     background: transparent;
 }
 
+QScrollArea#AppPageScroll,
+QScrollArea#AppPageScroll QWidget#AppPageViewport {
+    background: #0B1020;
+    border: none;
+}
+
+QScrollArea#TimelineScroll,
+QScrollArea#TimelineScroll QWidget#TimelineViewport {
+    background: #0F1530;
+    border: none;
+}
+
+QWidget#AppPage {
+    background: #0B1020;
+    color: #F8F8FF;
+}
+
 QScrollBar:horizontal {
     background: #10162A;
     height: 10px;
