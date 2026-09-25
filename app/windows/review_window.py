@@ -143,6 +143,7 @@ class ReviewWindow(QMainWindow):
         # MAIN CONTENT WRAPPER
         # ==============================================================
         content = QWidget()
+        content.setObjectName("AppPage")
         content.setMinimumWidth(1160)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(18, 18, 18, 16)
@@ -405,6 +406,8 @@ class ReviewWindow(QMainWindow):
         )
 
         self.timeline_scroll = QScrollArea()
+        self.timeline_scroll.setObjectName("TimelineScroll")
+        self.timeline_scroll.viewport().setObjectName("TimelineViewport")
         self.timeline_scroll.setWidget(self.timeline)
         self.timeline_scroll.setWidgetResizable(False)
         self.timeline_scroll.setMinimumHeight(112)
@@ -921,6 +924,8 @@ class ReviewWindow(QMainWindow):
         )
 
         page_scroll = QScrollArea()
+        page_scroll.setObjectName("AppPageScroll")
+        page_scroll.viewport().setObjectName("AppPageViewport")
         page_scroll.setWidgetResizable(True)
         page_scroll.setWidget(content)
         page_scroll.setFrameShape(QFrame.Shape.NoFrame)
