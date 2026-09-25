@@ -249,6 +249,10 @@ class ProjectWindow(QMainWindow):
 
             if output_path:
                 edit_lines.append(f"Vídeo editado: {output_path}")
+                if result.get("render_encoder"):
+                    edit_lines.append(
+                        f"Render: {result['render_encoder']}"
+                    )
                 self._can_review = True
                 self.review_button.setEnabled(self.worker is None)
 
