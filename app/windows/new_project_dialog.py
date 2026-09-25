@@ -16,17 +16,21 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app.ui.components import (
+    AspectCardButton,
+    ModernSwitch,
+    QualityCardButton,
+    SelectionCardButton,
     card,
     muted_label,
-    option_button,
-    quality_button,
     section_title,
 )
+from app.ui.icons import app_icon, icon_pixmap
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
@@ -41,14 +45,14 @@ from renderer.formats import ASPECT_RATIOS
 
 
 PROFILE_ICONS = {
-    "YouTube": "▶",
-    "Shorts / Reels / TikTok": "ϟ",
-    "Podcast": "●",
-    "Casamento": "◇",
-    "Gaming": "◆",
-    "Curso": "▤",
-    "VSL": "✦",
-    "Institucional": "▣",
+    "YouTube": "youtube",
+    "Shorts / Reels / TikTok": "shorts",
+    "Podcast": "podcast",
+    "Casamento": "wedding",
+    "Gaming": "gaming",
+    "Curso": "course",
+    "VSL": "vsl",
+    "Institucional": "institutional",
 }
 
 
@@ -109,12 +113,19 @@ class NewProjectDialog(QDialog):
         content_layout.setSpacing(14)
 
         header = QHBoxLayout()
-        plus = QLabel("＋")
+        plus = QLabel()
         plus.setFixedSize(48, 48)
         plus.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        plus.setPixmap(
+            icon_pixmap(
+                "plus",
+                color="#FFFFFF",
+                accent="#C084FC",
+                size=34,
+            )
+        )
         plus.setStyleSheet(
-            "background:#6D28D9; color:#FFFFFF; border-radius:24px;"
-            "font-size:26px; font-weight:700;"
+            "background:#6D28D9; border-radius:24px;"
         )
 
         header_text = QVBoxLayout()
@@ -185,6 +196,7 @@ class NewProjectDialog(QDialog):
             "font-weight:700; color:#17152A;"
         )
         self.video_button = QPushButton("Selecionar vídeo")
+        self.video_button.setIcon(app_icon("video", color="#5B4A85", accent="#8B5CF6", size=18))
         self.video_button.setStyleSheet(
             "QPushButton {background:#FFFFFF; color:#302A51;"
             "border:1px dashed #A7A0C5; border-radius:9px;"
@@ -225,28 +237,17 @@ class NewProjectDialog(QDialog):
         profile_grid.setVerticalSpacing(8)
 
         for index, profile in enumerate(profile_names()):
-            definition = get_profile_definition(profile)
             short_name = (
                 "Shorts"
                 if profile == "Shorts / Reels / TikTok"
                 else profile
             )
-            text = (
-                f"{PROFILE_ICONS.get(profile, '✦')}\n"
-                f"{short_name}\n"
-                f"{self._profile_short_description(profile)}"
-            )
-            button = QPushButton(text)
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setMinimumHeight(98)
-            button.setStyleSheet(
-                "QPushButton {background:#FFFFFF; color:#29243F;"
-                "border:1px solid #DCD8EA; border-radius:11px;"
-                "padding:8px; font-weight:650;}"
-                "QPushButton:hover {border:2px solid #B794F4;}"
-                "QPushButton:checked {background:#FAF7FF;"
-                "border:2px solid #8B5CF6; color:#241B45;}"
+            button = SelectionCardButton(
+                short_name,
+                self._profile_short_description(profile),
+                PROFILE_ICONS.get(profile, "sparkles"),
+                accent=self._profile_accent(profile),
+                light=True,
             )
             self.profile_group.addButton(button)
             self.profile_buttons[profile] = button
@@ -292,24 +293,16 @@ class NewProjectDialog(QDialog):
         aspect_row.setSpacing(8)
 
         aspect_examples = {
-            "16:9": "▰\n16:9\nYouTube, TV, PC",
-            "9:16": "▯\n9:16\nShorts, Reels",
-            "1:1": "□\n1:1\nFeed quadrado",
-            "4:5": "▯\n4:5\nFeed retrato",
+            "16:9": "YouTube, TV, PC",
+            "9:16": "Shorts, Reels, TikTok",
+            "1:1": "Instagram Feed",
+            "4:5": "Instagram, Facebook",
         }
 
         for aspect in ASPECT_RATIOS:
-            button = QPushButton(aspect_examples[aspect.key])
-            button.setCheckable(True)
-            button.setMinimumHeight(82)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setStyleSheet(
-                "QPushButton {background:#FFFFFF; color:#29243F;"
-                "border:1px solid #DCD8EA; border-radius:11px;"
-                "padding:7px; font-weight:700;}"
-                "QPushButton:hover {border:2px solid #B794F4;}"
-                "QPushButton:checked {background:#FAF7FF;"
-                "border:2px solid #8B5CF6; color:#241B45;}"
+            button = AspectCardButton(
+                aspect.key,
+                aspect_examples[aspect.key],
             )
             self.aspect_group.addButton(button)
             self.aspect_buttons[aspect.key] = button
@@ -337,7 +330,7 @@ class NewProjectDialog(QDialog):
         preview_layout.setSpacing(8)
 
         preview_header = QHBoxLayout()
-        preview_header.addWidget(section_title("◉  Pré-visualização"))
+        preview_header.addWidget(section_title("Pré-visualização", "preview"))
         preview_header.addStretch(1)
         self.preview_aspect_label = QLabel(self.selected_aspect)
         self.preview_aspect_label.setStyleSheet(
@@ -347,14 +340,63 @@ class NewProjectDialog(QDialog):
         preview_header.addWidget(self.preview_aspect_label)
         preview_layout.addLayout(preview_header)
 
-        self.video_widget = QVideoWidget()
-        self.video_widget.setMinimumHeight(230)
-        self.video_widget.setStyleSheet(
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.setMinimumHeight(230)
+        self.preview_stack.setStyleSheet(
+            "QStackedWidget {background:#070B18;"
+            "border:1px solid #34416F; border-radius:11px;}"
+        )
+
+        placeholder = QFrame()
+        placeholder.setObjectName("PreviewPlaceholder")
+        placeholder.setStyleSheet(
+            "QFrame#PreviewPlaceholder {"
             "background:qlineargradient("
             "x1:0,y1:0,x2:1,y2:1,"
-            "stop:0 #1D2450, stop:0.55 #23396B, stop:1 #51245C);"
-            "border-radius:10px;"
+            "stop:0 #241A55, stop:.48 #18365F, stop:1 #54215E);"
+            "border-radius:10px;}"
         )
+        placeholder_layout = QVBoxLayout(placeholder)
+        placeholder_layout.setContentsMargins(20, 28, 20, 28)
+        placeholder_layout.setSpacing(8)
+        placeholder_layout.addStretch(1)
+
+        preview_icon = QLabel()
+        preview_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_icon.setPixmap(
+            icon_pixmap(
+                "video",
+                color="#FFFFFF",
+                accent="#D8B4FE",
+                size=54,
+            )
+        )
+        preview_title = QLabel("Selecione um vídeo para visualizar")
+        preview_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_title.setStyleSheet(
+            "font-size:15px; font-weight:800; color:#FFFFFF;"
+        )
+        preview_hint = QLabel(
+            "A prévia real aparece aqui antes de criar o projeto."
+        )
+        preview_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_hint.setWordWrap(True)
+        preview_hint.setStyleSheet(
+            "font-size:11px; color:#C7CDED;"
+        )
+
+        placeholder_layout.addWidget(preview_icon)
+        placeholder_layout.addWidget(preview_title)
+        placeholder_layout.addWidget(preview_hint)
+        placeholder_layout.addStretch(1)
+
+        self.video_widget = QVideoWidget()
+        self.video_widget.setStyleSheet(
+            "background:#050814; border-radius:10px;"
+        )
+
+        self.preview_stack.addWidget(placeholder)
+        self.preview_stack.addWidget(self.video_widget)
 
         self.audio_output = QAudioOutput(self)
         self.audio_output.setVolume(0.35)
@@ -363,10 +405,13 @@ class NewProjectDialog(QDialog):
         self.player.setAudioOutput(self.audio_output)
         self.player.setVideoOutput(self.video_widget)
 
-        self.preview_play_button = QPushButton("▶  Reproduzir")
+        self.preview_play_button = QPushButton("Reproduzir")
+        self.preview_play_button.setIcon(
+            app_icon("play", color="#FFFFFF", accent="#C084FC", size=17)
+        )
         self.preview_play_button.clicked.connect(self._toggle_preview)
 
-        preview_layout.addWidget(self.video_widget, 1)
+        preview_layout.addWidget(self.preview_stack, 1)
         preview_layout.addWidget(self.preview_play_button)
         preview_layout.addWidget(
             muted_label(
@@ -383,7 +428,7 @@ class NewProjectDialog(QDialog):
         settings_layout.setSpacing(9)
 
         settings_layout.addWidget(
-            section_title("⚙  Configurações de exportação")
+            section_title("Configurações de exportação", "settings")
         )
         settings_layout.addWidget(
             muted_label("Qualidade preferida do vídeo")
@@ -395,21 +440,27 @@ class NewProjectDialog(QDialog):
         quality_row = QHBoxLayout()
         quality_row.setSpacing(6)
 
-        quality_subtitles = {
-            "original": "Original",
-            "1080p": "Full HD",
-            "720p": "HD",
-            "480p": "SD",
-            "360p": "Leve",
+        quality_meta = {
+            "original": ("ORIGINAL", "Fonte"),
+            "1080p": ("FULL HD", "Melhor"),
+            "720p": ("HD", "Leve"),
+            "480p": ("SD", "Menor"),
+            "360p": ("LEVE", "Compacto"),
         }
 
         for profile in EXPORT_PROFILES:
-            button = quality_button(
-                profile.label,
-                quality_subtitles.get(profile.key, ""),
-                checked=(profile.key == "original"),
+            badge, subtitle = quality_meta.get(
+                profile.key,
+                ("VIDEO", ""),
             )
-            button.setMinimumWidth(60)
+            button = QualityCardButton(
+                profile.label,
+                badge,
+                subtitle,
+            )
+            button.setChecked(
+                profile.key == "original"
+            )
             self.quality_group.addButton(button)
             self.quality_buttons[profile.key] = button
             button.clicked.connect(
@@ -420,7 +471,7 @@ class NewProjectDialog(QDialog):
 
         settings_layout.addLayout(quality_row)
 
-        self.captions_checkbox = QCheckBox("Legendas automáticas")
+        self.captions_checkbox = ModernSwitch("Legendas automáticas")
         self.captions_checkbox.setChecked(False)
         settings_layout.addWidget(self.captions_checkbox)
         settings_layout.addWidget(
@@ -430,7 +481,7 @@ class NewProjectDialog(QDialog):
             )
         )
 
-        self.auto_zoom_checkbox = QCheckBox("Zoom automático")
+        self.auto_zoom_checkbox = ModernSwitch("Zoom automático")
         self.auto_zoom_checkbox.setChecked(False)
         settings_layout.addWidget(self.auto_zoom_checkbox)
         settings_layout.addWidget(
@@ -444,7 +495,8 @@ class NewProjectDialog(QDialog):
 
         right_layout.addWidget(settings_card, 2)
 
-        self.create_button = QPushButton("✦  Criar Projeto  →")
+        self.create_button = QPushButton("Criar Projeto")
+        self.create_button.setIcon(app_icon("sparkles", color="#FFFFFF", accent="#FFFFFF", size=18))
         self.create_button.setProperty("primary", True)
         self.create_button.setMinimumHeight(48)
         self.create_button.clicked.connect(self.validate_and_accept)
@@ -506,6 +558,19 @@ class NewProjectDialog(QDialog):
         }
         return descriptions.get(profile, "")
 
+    @staticmethod
+    def _profile_accent(profile):
+        return {
+            "YouTube": "#EF4444",
+            "Shorts / Reels / TikTok": "#F43F5E",
+            "Podcast": "#6366F1",
+            "Casamento": "#D99A4E",
+            "Gaming": "#7C3AED",
+            "Curso": "#3B82F6",
+            "VSL": "#C026D3",
+            "Institucional": "#64748B",
+        }.get(profile, "#8B5CF6")
+
     def _set_profile(self, profile):
         self.selected_profile = profile
 
@@ -552,23 +617,41 @@ class NewProjectDialog(QDialog):
             "Cinematográfico": "Ritmo de filme",
         }
 
-        for index, style in enumerate(styles):
-            button = QPushButton(
-                f"{'✦' if index == 0 else '◇'}\n"
-                f"{style}\n"
-                f"{descriptions.get(style, 'Estilo personalizado')}"
+        style_icons = {
+            "Clean": "clean",
+            "Dinâmico": "dynamic",
+            "Conversa": "podcast",
+            "Highlights": "highlights",
+            "Didático": "course",
+            "Conversão": "vsl",
+            "Premium": "premium",
+            "Highlight": "highlights",
+            "Cinematográfico": "star",
+        }
+        style_accents = {
+            "Clean": "#38BDF8",
+            "Dinâmico": "#D946EF",
+            "Conversa": "#6366F1",
+            "Highlights": "#A855F7",
+            "Didático": "#3B82F6",
+            "Conversão": "#EC4899",
+            "Premium": "#D4A54A",
+            "Highlight": "#C084FC",
+            "Cinematográfico": "#E879F9",
+        }
+
+        for style in styles:
+            button = SelectionCardButton(
+                style,
+                descriptions.get(
+                    style,
+                    "Estilo personalizado",
+                ),
+                style_icons.get(style, "sparkles"),
+                accent=style_accents.get(style, "#8B5CF6"),
+                light=True,
             )
-            button.setCheckable(True)
-            button.setMinimumHeight(72)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setStyleSheet(
-                "QPushButton {background:#FFFFFF; color:#29243F;"
-                "border:1px solid #DCD8EA; border-radius:11px;"
-                "padding:7px; font-weight:700;}"
-                "QPushButton:hover {border:2px solid #B794F4;}"
-                "QPushButton:checked {background:#FAF7FF;"
-                "border:2px solid #8B5CF6; color:#241B45;}"
-            )
+            button.setMinimumHeight(88)
             self.style_group.addButton(button)
             self.style_buttons[style] = button
             button.clicked.connect(
@@ -653,9 +736,20 @@ class NewProjectDialog(QDialog):
         self.video_input.setText(file_path)
 
         name = Path(file_path).name
-        self.video_button.setText(f"▣  {name}   ×")
+        self.video_button.setText(name)
+        self.video_button.setIcon(
+            app_icon(
+                "video",
+                color="#5B4A85",
+                accent="#8B5CF6",
+                size=18,
+            )
+        )
         self.player.setSource(
             QUrl.fromLocalFile(file_path)
+        )
+        self.preview_stack.setCurrentWidget(
+            self.video_widget
         )
 
         if not self.name_input.text().strip():
@@ -669,10 +763,12 @@ class NewProjectDialog(QDialog):
             == QMediaPlayer.PlaybackState.PlayingState
         ):
             self.player.pause()
-            self.preview_play_button.setText("▶  Reproduzir")
+            self.preview_play_button.setText("Reproduzir")
+            self.preview_play_button.setIcon(app_icon("play", color="#FFFFFF", accent="#C084FC", size=17))
         else:
             self.player.play()
-            self.preview_play_button.setText("Ⅱ  Pausar")
+            self.preview_play_button.setText("Pausar")
+            self.preview_play_button.setIcon(app_icon("pause", color="#FFFFFF", accent="#C084FC", size=17))
 
     def validate_and_accept(self):
         if not self.name_input.text().strip():
