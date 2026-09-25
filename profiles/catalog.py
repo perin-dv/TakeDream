@@ -23,6 +23,7 @@ class ProfileDefinition:
     styles: tuple[str, ...]
     description: str
     orientation: str = "landscape"
+    aspect_ratio: str = "16:9"
 
 
 PROFILE_DEFINITIONS = (
@@ -36,6 +37,7 @@ PROFILE_DEFINITIONS = (
         ("Dinâmico", "Clean"),
         "Conteúdo curto e acelerado. Estrutura pronta para reframing vertical.",
         orientation="vertical",
+        aspect_ratio="9:16",
     ),
     ProfileDefinition(
         "Podcast",
