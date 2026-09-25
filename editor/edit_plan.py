@@ -15,7 +15,13 @@ def build_edit_plan(duration_ms, profile, style, silences):
     rules = get_edit_rules(profile, style)
     removals = []
 
-    for silence in silences["silences"]:
+    silence_items = (
+        silences["silences"]
+        if rules.automatic_silence_cuts
+        else []
+    )
+
+    for silence in silence_items:
         try:
             silence_start = int(silence["start_ms"])
             silence_end = int(silence["end_ms"])
