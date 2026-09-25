@@ -1109,15 +1109,43 @@ class ReviewWindow(QMainWindow):
         self.progress_bar.setRange(0, 0)
 
         if mode == "rerender":
+            if (
+                self.auto_zoom_checkbox.isChecked()
+                and not self.content_analysis
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Análise necessária",
+                    "Execute ANALISAR CONTEÚDO / IA V1 "
+                    "antes de usar zoom automático.",
+                )
+                self._set_processing_controls(True)
+                self.progress_bar.setRange(0, 100)
+                return
+
             self.status_label.setText(
-                "Aplicando ajustes da timeline..."
+                "Aplicando timeline, formato e efeitos..."
             )
             self.worker = ReviewWorker(
                 self.project_dir,
                 "rerender",
                 edit_plan=deepcopy(self.plan),
+                render_settings=deepcopy(
+                    self.render_settings
+                ),
                 parent=self,
             )
+
+        elif mode == "content":
+            self.status_label.setText(
+                "Analisando conteúdo e preparando timeline..."
+            )
+            self.worker = ReviewWorker(
+                self.project_dir,
+                "content",
+                parent=self,
+            )
+
         else:
             export_key = self.export_combo.currentData()
             self.status_label.setText(
@@ -1158,12 +1186,30 @@ class ReviewWindow(QMainWindow):
 
     def _worker_completed(self, result):
         if "output_path" in result:
-            self.plan = deepcopy(result["edit_plan"])
+            self.plan = deepcopy(
+                result["edit_plan"]
+            )
             self.saved_plan = deepcopy(
                 result["edit_plan"]
             )
-            self.output_path = result["output_path"]
-            self._dirty = False
+            self.output_path = (
+                result["output_path"]
+            )
+
+            returned_settings = (
+                result.get(
+                    "review_settings"
+                )
+                or self.render_settings
+            )
+            self.render_settings = deepcopy(
+                returned_settings
+            )
+            self.saved_settings = deepcopy(
+                returned_settings
+            )
+            self._apply_settings_to_widgets()
+            self._update_dirty_state()
 
             self.undo_stack.clear()
             self.redo_stack.clear()
@@ -1173,7 +1219,9 @@ class ReviewWindow(QMainWindow):
                 "Nova prévia gerada com os ajustes."
             )
 
-            encoder = result.get("render_encoder")
+            encoder = result.get(
+                "render_encoder"
+            )
             self.status_label.setText(
                 "Nova prévia pronta para revisão."
                 + (
@@ -1199,9 +1247,29 @@ class ReviewWindow(QMainWindow):
                 "Vídeo exportado",
                 f"Vídeo final criado com sucesso.\n\n"
                 f"Qualidade: {result['export_label']}\n"
+                f"Formato: "
+                f"{result.get('export_aspect_ratio', '—')}\n"
                 f"Arquivo: {result['export_path']}\n"
                 f"Processamento: "
                 f"{result.get('render_encoder', '—')}",
+            )
+
+        elif "content_analysis" in result:
+            self.content_analysis = (
+                result["content_analysis"]
+            )
+            thumbnails = result.get(
+                "thumbnail_paths",
+                [],
+            )
+            if thumbnails:
+                self.timeline.set_thumbnails(
+                    thumbnails
+                )
+            self._refresh_content_summary()
+            self.status_label.setText(
+                "Análise de conteúdo pronta. "
+                "Você já pode ativar zoom automático."
             )
 
         self._set_progress(100)
