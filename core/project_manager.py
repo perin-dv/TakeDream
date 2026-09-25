@@ -134,6 +134,82 @@ class ProjectManager:
 
         return path, project_data
 
+
+    def list_projects(self):
+        projects = []
+
+        if not self.projects_root.exists():
+            return projects
+
+        for project_file in self.projects_root.glob("*/project.json"):
+            try:
+                project_dir, data = self.load_project(project_file)
+            except ValueError:
+                continue
+
+            projects.append(
+                {
+                    "project_dir": project_dir,
+                    "name": data.get("name", project_dir.name),
+                    "profile": data.get("profile", "—"),
+                    "style": data.get("style", "—"),
+                    "aspect_ratio": data.get("aspect_ratio", "16:9"),
+                    "status": data.get("status", "created"),
+                    "updated_at": data.get("updated_at", ""),
+                    "created_at": data.get("created_at", ""),
+                    "source_filename": data.get(
+                        "source",
+                        {},
+                    ).get("filename", "—"),
+                    "output_path": data.get("output_path"),
+                }
+            )
+
+        projects.sort(
+            key=lambda item: (
+                item.get("updated_at")
+                or item.get("created_at")
+                or ""
+            ),
+            reverse=True,
+        )
+        return projects
+
+    def list_exports(self):
+        exports = []
+
+        for project in self.list_projects():
+            export_dir = project["project_dir"] / "exports"
+
+            if not export_dir.exists():
+                continue
+
+            for file in sorted(
+                export_dir.glob("*.mp4"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            ):
+                try:
+                    stat = file.stat()
+                except OSError:
+                    continue
+
+                exports.append(
+                    {
+                        "path": file,
+                        "project_name": project["name"],
+                        "filename": file.name,
+                        "size_bytes": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                    }
+                )
+
+        exports.sort(
+            key=lambda item: item["modified_at"],
+            reverse=True,
+        )
+        return exports
+
     def save_media_metadata(self, project_dir, metadata):
         project_dir = Path(project_dir).expanduser().resolve()
         analysis_dir = project_dir / "analysis"
