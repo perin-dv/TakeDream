@@ -205,10 +205,49 @@ def build_filter_graph(
         for index in range(len(slices))
     )
 
+    has_aspect_transform = (
+        target_aspect_ratio
+        and type(source_width) is int
+        and type(source_height) is int
+    )
+    has_output_size = output_size is not None
+    has_simple_height_scale = (
+        output_height is not None
+        and not target_aspect_ratio
+    )
+    has_captions = caption_file is not None
+
+    if not any(
+        (
+            has_aspect_transform,
+            has_output_size,
+            has_simple_height_scale,
+            has_captions,
+        )
+    ):
+        filters.append(
+            f"{inputs}concat=n={len(slices)}:"
+            "v=1:a=1[outv][outa]"
+        )
+        return ";\n".join(filters)
+
     filters.append(
         f"{inputs}concat=n={len(slices)}:"
         "v=1:a=1[joinedv][outa]"
     )
+
+    if (
+        has_simple_height_scale
+        and not has_aspect_transform
+        and not has_output_size
+        and not has_captions
+    ):
+        filters.append(
+            "[joinedv]"
+            f"scale=-2:{int(output_height)}:"
+            "flags=lanczos[outv]"
+        )
+        return ";\n".join(filters)
 
     current = "joinedv"
     stage_index = 0
