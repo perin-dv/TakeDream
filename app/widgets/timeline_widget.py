@@ -1,5 +1,5 @@
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from editor.edit_plan import validate_edit_plan
@@ -18,6 +18,7 @@ class TimelineWidget(QWidget):
         self._zoom = 1.0
         self._base_width = 1080
         self._waveform = []
+        self._thumbnails = []
         self.setFixedHeight(98)
         self.setMouseTracking(True)
         self._apply_zoom()
@@ -49,6 +50,17 @@ class TimelineWidget(QWidget):
 
     def set_waveform(self, peaks):
         self._waveform = list(peaks or [])
+        self.update()
+
+    def set_thumbnails(self, paths):
+        thumbnails = []
+
+        for path in paths or []:
+            pixmap = QPixmap(str(path))
+            if not pixmap.isNull():
+                thumbnails.append(pixmap)
+
+        self._thumbnails = thumbnails
         self.update()
 
     def set_playhead_source_ms(self, value):
@@ -98,6 +110,28 @@ class TimelineWidget(QWidget):
         if duration <= 0:
             return
 
+        if self._thumbnails:
+            thumb_width = (
+                area.width()
+                / len(self._thumbnails)
+            )
+
+            for thumb_index, pixmap in enumerate(
+                self._thumbnails
+            ):
+                target = QRectF(
+                    area.left()
+                    + thumb_index
+                    * thumb_width,
+                    area.top(),
+                    thumb_width + 1,
+                    area.height(),
+                )
+                painter.drawPixmap(
+                    target.toRect(),
+                    pixmap,
+                )
+
         for index, segment in enumerate(self._plan["segments"]):
             start_ratio = segment["start_ms"] / duration
             end_ratio = segment["end_ms"] / duration
@@ -114,11 +148,21 @@ class TimelineWidget(QWidget):
                 area.height(),
             )
 
-            fill = (
-                QColor("#d95d5d")
-                if segment["action"] == "remove"
-                else QColor("#4aa889")
-            )
+            if segment["action"] == "remove":
+                fill = QColor(
+                    217,
+                    93,
+                    93,
+                    185 if self._thumbnails else 255,
+                )
+            else:
+                fill = QColor(
+                    74,
+                    168,
+                    137,
+                    150 if self._thumbnails else 255,
+                )
+
             painter.fillRect(rect, fill)
 
             if segment.get("reason", "").startswith("manual"):
