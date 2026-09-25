@@ -1429,6 +1429,11 @@ class ReviewWindow(QMainWindow):
             for control in controls:
                 control.blockSignals(False)
 
+        if hasattr(self, "aspect_buttons"):
+            self._sync_aspect_buttons()
+        if hasattr(self, "caption_style_buttons"):
+            self._sync_caption_style_buttons()
+
     def _settings_changed(self, *args):
         self.render_settings = (
             self._current_render_settings()
@@ -1450,27 +1455,66 @@ class ReviewWindow(QMainWindow):
         analysis = self.content_analysis
 
         if not analysis:
-            self.content_summary_label.setText(
+            text = (
                 "Conteúdo ainda não analisado. "
                 "A análise V1 gera sugestões de hesitação, "
                 "repetição, B-roll e zoom."
             )
+            self.content_summary_label.setText(text)
+
+            if hasattr(self, "ai_hesitation_value"):
+                self.ai_hesitation_value.setText("Aguardando análise")
+                self.ai_repetition_value.setText("Aguardando análise")
+                self.ai_broll_value.setText("Aguardando análise")
+                self.ai_zoom_value.setText("Aguardando análise")
             return
 
         summary = analysis.get(
             "summary",
             {},
         )
+
+        fillers = summary.get("fillers", 0)
+        word_repetitions = summary.get(
+            "word_repetitions",
+            0,
+        )
+        phrase_repetitions = summary.get(
+            "possible_repetitions",
+            0,
+        )
+        broll = summary.get(
+            "broll_suggestions",
+            0,
+        )
+        zooms = summary.get(
+            "zoom_events",
+            0,
+        )
+
         self.content_summary_label.setText(
             "Análise V1 • "
-            f"Hesitações: {summary.get('fillers', 0)} • "
-            "Palavras repetidas: "
-            f"{summary.get('word_repetitions', 0)} • "
-            "Frases repetidas: "
-            f"{summary.get('possible_repetitions', 0)} • "
-            f"B-roll: {summary.get('broll_suggestions', 0)} • "
-            f"Zooms: {summary.get('zoom_events', 0)}"
+            f"Hesitações: {fillers} • "
+            f"Palavras repetidas: {word_repetitions} • "
+            f"Frases repetidas: {phrase_repetitions} • "
+            f"B-roll: {broll} • "
+            f"Zooms: {zooms}"
         )
+
+        if hasattr(self, "ai_hesitation_value"):
+            self.ai_hesitation_value.setText(
+                f"{fillers} ponto(s) para revisar"
+            )
+            self.ai_repetition_value.setText(
+                f"{word_repetitions + phrase_repetitions} "
+                "repetição(ões) provável(is)"
+            )
+            self.ai_broll_value.setText(
+                f"{broll} sugestão(ões) de apoio visual"
+            )
+            self.ai_zoom_value.setText(
+                f"{zooms} momento(s) sugerido(s)"
+            )
 
     def _refresh_summary(self):
         stats = self.plan["stats"]
@@ -1506,11 +1550,28 @@ class ReviewWindow(QMainWindow):
         self.mark_out_button.setEnabled(editing_enabled)
 
         self.aspect_combo.setEnabled(editing_enabled)
+        for button in getattr(
+            self,
+            "aspect_buttons",
+            {},
+        ).values():
+            button.setEnabled(editing_enabled)
+
         self.captions_checkbox.setEnabled(editing_enabled)
-        self.caption_style_combo.setEnabled(
+        caption_style_enabled = (
             editing_enabled
             and self.captions_checkbox.isChecked()
         )
+        self.caption_style_combo.setEnabled(
+            caption_style_enabled
+        )
+        for button in getattr(
+            self,
+            "caption_style_buttons",
+            {},
+        ).values():
+            button.setEnabled(caption_style_enabled)
+
         self.auto_zoom_checkbox.setEnabled(editing_enabled)
         self.analyze_content_button.setEnabled(editing_enabled)
 
@@ -1786,11 +1847,28 @@ class ReviewWindow(QMainWindow):
         self.export_combo.setEnabled(enabled)
         self.zoom_slider.setEnabled(enabled)
         self.aspect_combo.setEnabled(enabled)
+        for button in getattr(
+            self,
+            "aspect_buttons",
+            {},
+        ).values():
+            button.setEnabled(enabled)
+
         self.captions_checkbox.setEnabled(enabled)
-        self.caption_style_combo.setEnabled(
+        caption_style_enabled = (
             enabled
             and self.captions_checkbox.isChecked()
         )
+        self.caption_style_combo.setEnabled(
+            caption_style_enabled
+        )
+        for button in getattr(
+            self,
+            "caption_style_buttons",
+            {},
+        ).values():
+            button.setEnabled(caption_style_enabled)
+
         self.auto_zoom_checkbox.setEnabled(enabled)
         self.analyze_content_button.setEnabled(enabled)
         self.cancel_button.setEnabled(not enabled)
