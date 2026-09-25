@@ -2,7 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.content_pipeline import ContentPipeline
 from core.project_manager import ProjectManager
+from core.storage import write_json
 from core.render_settings import (
     normalize_render_settings,
 )
@@ -148,6 +150,12 @@ class ContentAnalysisTests(unittest.TestCase):
                             "word": "hoje",
                             "probability": 0.99,
                         },
+                        {
+                            "start_ms": 680,
+                            "end_ms": 940,
+                            "word": "hoje",
+                            "probability": 0.99,
+                        },
                     ],
                 },
                 {
@@ -186,6 +194,12 @@ class ContentAnalysisTests(unittest.TestCase):
         )
         self.assertGreaterEqual(
             analysis["summary"][
+                "word_repetitions"
+            ],
+            1,
+        )
+        self.assertGreaterEqual(
+            analysis["summary"][
                 "possible_repetitions"
             ],
             1,
@@ -200,6 +214,81 @@ class ContentAnalysisTests(unittest.TestCase):
             analysis["summary"]["zoom_events"],
             1,
         )
+
+
+class ContentPipelineTests(unittest.TestCase):
+    def test_pipeline_persists_modular_analysis_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+
+            manager = ProjectManager(
+                root / "projects"
+            )
+            project = manager.create_project(
+                "Conteudo",
+                source,
+                "YouTube",
+                "Dinâmico",
+            )
+
+            transcript_dir = (
+                project / "transcription"
+            )
+            transcript_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            write_json(
+                transcript_dir / "transcript.json",
+                {
+                    "schema_version": "0.1",
+                    "segments": [
+                        {
+                            "id": 0,
+                            "start_ms": 0,
+                            "end_ms": 2500,
+                            "text": (
+                                "Ah produto automotivo "
+                                "suspensao completa"
+                            ),
+                            "words": [
+                                {
+                                    "start_ms": 0,
+                                    "end_ms": 200,
+                                    "word": "Ah",
+                                    "probability": 0.99,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+            class FakeTools:
+                ffmpeg_path = None
+
+            result = ContentPipeline(
+                manager=manager,
+                tools=FakeTools(),
+            ).run(project)
+
+            self.assertIn(
+                "content_analysis",
+                result,
+            )
+
+            for relative in (
+                "analysis/content_analysis.json",
+                "analysis/speech_suggestions.json",
+                "analysis/broll_suggestions.json",
+                "analysis/zoom_plan.json",
+            ):
+                self.assertTrue(
+                    (project / relative).exists()
+                )
 
 
 class CaptionAndFilterTests(unittest.TestCase):
