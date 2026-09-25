@@ -148,6 +148,94 @@ class ReviewWindow(QMainWindow):
             Qt.AlignmentFlag.AlignCenter
         )
 
+        visual_controls = QHBoxLayout()
+        visual_controls.addWidget(QLabel("Formato:"))
+
+        self.aspect_combo = QComboBox()
+        for aspect in ASPECT_RATIOS:
+            self.aspect_combo.addItem(
+                aspect.label,
+                aspect.key,
+            )
+        aspect_index = self.aspect_combo.findData(
+            self.render_settings["aspect_ratio"]
+        )
+        if aspect_index >= 0:
+            self.aspect_combo.setCurrentIndex(
+                aspect_index
+            )
+
+        self.captions_checkbox = QCheckBox(
+            "Legendas"
+        )
+        self.captions_checkbox.setChecked(
+            self.render_settings[
+                "captions_enabled"
+            ]
+        )
+
+        self.caption_style_combo = QComboBox()
+        self.caption_style_combo.addItems(
+            CAPTION_STYLES
+        )
+        caption_index = (
+            self.caption_style_combo.findText(
+                self.render_settings[
+                    "caption_style"
+                ]
+            )
+        )
+        if caption_index >= 0:
+            self.caption_style_combo.setCurrentIndex(
+                caption_index
+            )
+
+        self.auto_zoom_checkbox = QCheckBox(
+            "Zoom automático"
+        )
+        self.auto_zoom_checkbox.setChecked(
+            self.render_settings[
+                "auto_zoom"
+            ]
+        )
+
+        visual_controls.addWidget(
+            self.aspect_combo
+        )
+        visual_controls.addWidget(
+            self.captions_checkbox
+        )
+        visual_controls.addWidget(
+            self.caption_style_combo
+        )
+        visual_controls.addWidget(
+            self.auto_zoom_checkbox
+        )
+
+        self.aspect_combo.currentIndexChanged.connect(
+            self._settings_changed
+        )
+        self.captions_checkbox.toggled.connect(
+            self._settings_changed
+        )
+        self.caption_style_combo.currentIndexChanged.connect(
+            self._settings_changed
+        )
+        self.auto_zoom_checkbox.toggled.connect(
+            self._settings_changed
+        )
+
+        self.analyze_content_button = QPushButton(
+            "ANALISAR CONTEÚDO / IA V1"
+        )
+        self.analyze_content_button.clicked.connect(
+            lambda: self._start_worker("content")
+        )
+
+        self.content_summary_label = QLabel()
+        self.content_summary_label.setWordWrap(True)
+        self._refresh_content_summary()
+
         legend = QLabel(
             "Timeline do original: verde = mantido • "
             "vermelho = removido • borda amarela = ajuste manual. "
@@ -404,6 +492,9 @@ class ReviewWindow(QMainWindow):
         layout.addWidget(self.video_widget, 1)
         layout.addLayout(player_controls)
         layout.addWidget(self.summary_label)
+        layout.addLayout(visual_controls)
+        layout.addWidget(self.analyze_content_button)
+        layout.addWidget(self.content_summary_label)
         layout.addWidget(legend)
         layout.addLayout(zoom_controls)
         layout.addWidget(self.timeline_scroll)
