@@ -32,9 +32,18 @@ from media.ffmpeg_tools import FFmpegTools
 
 
 class ProjectWindow(QMainWindow):
-    def __init__(self, project_dir, parent=None):
+    def __init__(
+        self,
+        project_dir,
+        parent=None,
+        *,
+        embedded=False,
+        host=None,
+    ):
         super().__init__(parent)
 
+        self.embedded = embedded
+        self.host = host
         self.project_manager = ProjectManager()
         self.ffmpeg_tools = FFmpegTools()
         self.worker = None
@@ -391,7 +400,9 @@ class ProjectWindow(QMainWindow):
         close_button = QPushButton(
             "Voltar ao dashboard"
         )
-        close_button.clicked.connect(self.close)
+        close_button.clicked.connect(
+            self._go_home
+        )
         footer.addWidget(close_button)
 
         content_layout.addWidget(footer_card)
@@ -460,6 +471,14 @@ class ProjectWindow(QMainWindow):
             self.open_review()
             return
 
+        if self.host is not None and hasattr(
+            self.host,
+            "_navigate",
+        ):
+            self.player.stop()
+            self.host._navigate(target)
+            return
+
         parent = self.parent()
         if parent is not None and hasattr(
             parent,
@@ -476,6 +495,18 @@ class ProjectWindow(QMainWindow):
             ):
                 self.close()
                 parent._navigate(target)
+
+    def _go_home(self):
+        self.player.stop()
+
+        if self.host is not None and hasattr(
+            self.host,
+            "_navigate",
+        ):
+            self.host._navigate("home")
+            return
+
+        self.close()
 
     def analyze_media(self):
         self._start_worker("analyze")
@@ -674,6 +705,16 @@ class ProjectWindow(QMainWindow):
 
     def open_review(self):
         if not self._can_review:
+            return
+
+        if self.host is not None and hasattr(
+            self.host,
+            "_show_review_page",
+        ):
+            self.player.pause()
+            self.host._show_review_page(
+                self.project_dir
+            )
             return
 
         try:
