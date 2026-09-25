@@ -523,6 +523,14 @@ class ReviewWindow(QMainWindow):
         except (OSError, ValueError, wave.Error, EOFError):
             pass
 
+        cached_thumbnails = load_thumbnail_manifest(
+            self.project_dir
+        )
+        if cached_thumbnails:
+            self.timeline.set_thumbnails(
+                cached_thumbnails
+            )
+
         self._refresh_summary()
         self._refresh_edit_controls()
 
@@ -643,7 +651,7 @@ class ReviewWindow(QMainWindow):
 
     def _apply_plan(self, plan, message, select_ms=None):
         self.plan = deepcopy(plan)
-        self._dirty = self.plan != self.saved_plan
+        self._update_dirty_state()
 
         self.timeline.set_plan(self.plan)
 
@@ -869,13 +877,135 @@ class ReviewWindow(QMainWindow):
         )
 
     def _reset_review_changes(self):
-        if self.plan == self.saved_plan:
+        if (
+            self.plan == self.saved_plan
+            and self.render_settings
+            == self.saved_settings
+        ):
             return
 
-        self._push_history()
-        self._apply_plan(
-            self.saved_plan,
-            "Alterações voltaram para a última prévia.",
+        if self.plan != self.saved_plan:
+            self._push_history()
+
+        self.plan = deepcopy(self.saved_plan)
+        self.render_settings = deepcopy(
+            self.saved_settings
+        )
+        self.timeline.set_plan(self.plan)
+        self._apply_settings_to_widgets()
+        self._update_dirty_state()
+        self.status_label.setText(
+            "Alterações voltaram para a última prévia."
+        )
+        self._refresh_summary()
+        self._refresh_edit_controls()
+
+    def _current_render_settings(self):
+        return {
+            "aspect_ratio": (
+                self.aspect_combo.currentData()
+            ),
+            "captions_enabled": (
+                self.captions_checkbox.isChecked()
+            ),
+            "caption_style": (
+                self.caption_style_combo.currentText()
+            ),
+            "auto_zoom": (
+                self.auto_zoom_checkbox.isChecked()
+            ),
+        }
+
+    def _apply_settings_to_widgets(self):
+        controls = (
+            self.aspect_combo,
+            self.captions_checkbox,
+            self.caption_style_combo,
+            self.auto_zoom_checkbox,
+        )
+
+        for control in controls:
+            control.blockSignals(True)
+
+        try:
+            aspect_index = (
+                self.aspect_combo.findData(
+                    self.render_settings[
+                        "aspect_ratio"
+                    ]
+                )
+            )
+            if aspect_index >= 0:
+                self.aspect_combo.setCurrentIndex(
+                    aspect_index
+                )
+
+            self.captions_checkbox.setChecked(
+                self.render_settings[
+                    "captions_enabled"
+                ]
+            )
+
+            caption_index = (
+                self.caption_style_combo.findText(
+                    self.render_settings[
+                        "caption_style"
+                    ]
+                )
+            )
+            if caption_index >= 0:
+                self.caption_style_combo.setCurrentIndex(
+                    caption_index
+                )
+
+            self.auto_zoom_checkbox.setChecked(
+                self.render_settings[
+                    "auto_zoom"
+                ]
+            )
+        finally:
+            for control in controls:
+                control.blockSignals(False)
+
+    def _settings_changed(self, *args):
+        self.render_settings = (
+            self._current_render_settings()
+        )
+        self._update_dirty_state()
+        self.status_label.setText(
+            "Formato/efeitos alterados. Gere uma nova prévia."
+        )
+        self._refresh_edit_controls()
+
+    def _update_dirty_state(self):
+        self._dirty = (
+            self.plan != self.saved_plan
+            or self.render_settings
+            != self.saved_settings
+        )
+
+    def _refresh_content_summary(self):
+        analysis = self.content_analysis
+
+        if not analysis:
+            self.content_summary_label.setText(
+                "Conteúdo ainda não analisado. "
+                "A análise V1 gera sugestões de hesitação, "
+                "repetição, B-roll e zoom."
+            )
+            return
+
+        summary = analysis.get(
+            "summary",
+            {},
+        )
+        self.content_summary_label.setText(
+            "Análise V1 • "
+            f"Hesitações: {summary.get('fillers', 0)} • "
+            "Repetições prováveis: "
+            f"{summary.get('possible_repetitions', 0)} • "
+            f"B-roll: {summary.get('broll_suggestions', 0)} • "
+            f"Zooms: {summary.get('zoom_events', 0)}"
         )
 
     def _refresh_summary(self):
