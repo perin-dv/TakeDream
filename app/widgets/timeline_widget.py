@@ -14,13 +14,33 @@ class TimelineWidget(QWidget):
         self._plan = None
         self._selected_index = None
         self._playhead_source_ms = 0
+        self._zoom_factor = 1.0
+        self._base_width = 1100
         self.setMinimumHeight(92)
         self.setMouseTracking(True)
+        self._apply_zoom_width()
 
     def set_plan(self, plan):
         self._plan = validate_edit_plan(plan)
         self._selected_index = None
         self._playhead_source_ms = 0
+        self.update()
+
+    def set_zoom_factor(self, factor):
+        self._zoom_factor = max(1.0, min(float(factor), 8.0))
+        self._apply_zoom_width()
+        self.update()
+
+    def zoom_factor(self):
+        return self._zoom_factor
+
+    def select_segment(self, index):
+        if self._plan is None:
+            return
+        if index is None or index < 0 or index >= len(self._plan["segments"]):
+            self._selected_index = None
+        else:
+            self._selected_index = int(index)
         self.update()
 
     def set_playhead_source_ms(self, value):
@@ -31,8 +51,18 @@ class TimelineWidget(QWidget):
         self._playhead_source_ms = max(0, min(int(value), duration))
         self.update()
 
+    def playhead_source_ms(self):
+        return self._playhead_source_ms
+
     def selected_index(self):
         return self._selected_index
+
+    def _apply_zoom_width(self):
+        self.setMinimumWidth(int(self._base_width * self._zoom_factor))
+        self.resize(
+            self.minimumWidth(),
+            max(self.height(), self.minimumHeight()),
+        )
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -91,7 +121,7 @@ class TimelineWidget(QWidget):
             "0:00",
         )
         painter.drawText(
-            area.right() - 44,
+            area.right() - 52,
             self.height() - 6,
             self._format_ms(duration),
         )
@@ -118,6 +148,7 @@ class TimelineWidget(QWidget):
             selected = len(self._plan["segments"]) - 1
 
         self._selected_index = selected
+        self._playhead_source_ms = source_ms
         self.update()
 
         if selected is None:
