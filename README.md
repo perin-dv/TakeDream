@@ -182,6 +182,37 @@ ou tracking automático.
 
 Exportações disponíveis: `Original`, `1080p`, `720p`, `480p` e `360p`.
 
+## Modelos de edição por perfil
+
+O TakeDream usa presets reais de edição, e não apenas nomes visuais. Cada estilo
+define parâmetros de corte e também recomenda comportamento visual para a prévia:
+
+- limiar mínimo de silêncio para corte;
+- proteção das bordas do corte;
+- ritmo de zoom;
+- intensidade do zoom;
+- frequência de sugestões de B-roll;
+- legenda recomendada;
+- ativação padrão de legenda e zoom.
+
+Exemplos atuais:
+
+- YouTube: Dinâmico, Clean, Premium, Highlights e Storytelling;
+- Shorts/Reels/TikTok: Dinâmico, Impacto, Clean e Highlights;
+- Podcast: Conversa, Clean e Premium;
+- Gaming: Dinâmico, Highlights e Clean;
+- Curso: Didático, Clean e Premium;
+- VSL: Conversão, Dinâmico e Clean;
+- Institucional: Premium, Clean e Storytelling;
+- Casamento: Highlight, Cinematográfico e Emocional.
+
+Ao criar um projeto, o card de estilo mostra o comportamento recomendado e os
+toggles de legenda/zoom assumem os defaults do preset, mas continuam editáveis.
+
+A primeira edição automática também usa o preset visual salvo no projeto. Quando
+o estilo pede zoom automático, a análise de conteúdo é gerada antes do primeiro
+render; quando o estilo pede legenda, o arquivo ASS é preparado já nessa prévia.
+
 ## Editor V3: formatos, análise de conteúdo e efeitos
 
 O formato é independente do perfil. Todo projeto pode escolher:
