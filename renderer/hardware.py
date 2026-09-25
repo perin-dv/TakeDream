@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from core.processing import ProcessingError
+from core.processing import ProcessingCancelled, ProcessingError
 from media.process import run_media
 
 
@@ -77,6 +77,8 @@ def _probe_encoder(ffmpeg_path, encoder, cancel=None):
 
     try:
         run_media(command, cancel=cancel, timeout=15)
+    except ProcessingCancelled:
+        raise
     except ProcessingError:
         return False
 
@@ -90,6 +92,8 @@ def select_h264_encoder(ffmpeg_path, cancel=None):
 
     try:
         encoders_text = listed_encoders(ffmpeg_path, cancel=cancel)
+    except ProcessingCancelled:
+        raise
     except ProcessingError:
         return CPU_ENCODER
 
