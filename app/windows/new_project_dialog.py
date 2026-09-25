@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -108,6 +109,7 @@ class NewProjectDialog(QDialog):
 
         content = QWidget()
         content.setObjectName("AppPage")
+        content.setMinimumWidth(1060)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(22, 20, 22, 18)
         content_layout.setSpacing(14)
@@ -506,7 +508,17 @@ class NewProjectDialog(QDialog):
         columns.addWidget(right, 2)
         content_layout.addLayout(columns, 1)
 
-        root.addWidget(content, 1)
+        page_scroll = QScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setWidget(content)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        page_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        root.addWidget(page_scroll, 1)
 
         apply_app_theme(self)
         if not embedded:
