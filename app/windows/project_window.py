@@ -44,6 +44,12 @@ class ProjectWindow(QMainWindow):
 
         self.embedded = embedded
         self.host = host
+
+        if embedded:
+            self.setWindowFlags(
+                Qt.WindowType.Widget
+            )
+
         self.project_manager = ProjectManager()
         self.ffmpeg_tools = FFmpegTools()
         self.worker = None
@@ -411,7 +417,8 @@ class ProjectWindow(QMainWindow):
         self.setCentralWidget(root)
 
         apply_app_theme(self)
-        enable_dark_title_bar(self)
+        if not embedded:
+            enable_dark_title_bar(self)
 
         self._update_ffmpeg_status()
         self._load_saved_metadata()
