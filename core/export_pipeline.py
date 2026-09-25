@@ -164,6 +164,15 @@ class ExportPipeline:
             last_export_path=relative_output,
             last_export_profile=profile.key,
             last_export_mode=export_mode,
+            last_export_encoder=(
+                getattr(
+                    getattr(self.renderer, "last_encoder", None),
+                    "label",
+                    "Desconhecido",
+                )
+                if export_mode == "render"
+                else "Smart Copy"
+            ),
         )
 
         progress(100)
