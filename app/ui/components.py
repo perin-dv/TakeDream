@@ -433,7 +433,7 @@ class QualityCardButton(QAbstractButton):
         self.subtitle = subtitle
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(76, 78)
+        self.setMinimumSize(62, 78)
 
     def paintEvent(self, event):
         p = QPainter(self)
