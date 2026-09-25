@@ -10,6 +10,7 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
@@ -26,8 +27,11 @@ from PySide6.QtWidgets import (
 
 from app.review_worker import ReviewWorker
 from app.widgets.timeline_widget import TimelineWidget
+from core.content_pipeline import load_content_analysis
 from core.edit_pipeline import load_edit_state
 from core.project_manager import ProjectManager
+from core.render_settings import normalize_render_settings
+from media.thumbnails import load_thumbnail_manifest
 from media.waveform import load_or_create_waveform
 from editor.review import (
     adjust_removed_segment,
@@ -39,7 +43,9 @@ from editor.review import (
     source_to_edited_ms,
     split_at,
 )
+from renderer.captions import CAPTION_STYLES
 from renderer.export_profiles import EXPORT_PROFILES
+from renderer.formats import ASPECT_RATIOS
 
 
 class ReviewWindow(QMainWindow):
@@ -66,6 +72,15 @@ class ReviewWindow(QMainWindow):
         self.plan = deepcopy(state["edit_plan"])
         self.saved_plan = deepcopy(state["edit_plan"])
         self.output_path = state["output_path"]
+
+        self.saved_settings = normalize_render_settings(
+            self.project_data.get("review_settings"),
+            self.project_data,
+        )
+        self.render_settings = deepcopy(self.saved_settings)
+        self.content_analysis = load_content_analysis(
+            self.project_dir
+        )
 
         self.worker = None
         self._close_pending = False
