@@ -61,21 +61,6 @@ class ProjectManager:
                 f"Formato de vídeo não suportado: {source_path.suffix}"
             )
 
-        project_dir = self._create_unique_project_directory(name)
-
-        for folder in (
-            "source",
-            "audio",
-            "transcription",
-            "analysis",
-            "decisions",
-            "cache",
-            "output",
-            "exports",
-            "logs",
-        ):
-            (project_dir / folder).mkdir(parents=True, exist_ok=True)
-
         profile_definition = get_profile_definition(profile)
         get_edit_rules(profile, style)
         style_preset = get_style_preset(style)
@@ -98,6 +83,21 @@ class ProjectManager:
         aspect_definition = get_aspect_ratio(
             selected_aspect
         )
+
+        project_dir = self._create_unique_project_directory(name)
+
+        for folder in (
+            "source",
+            "audio",
+            "transcription",
+            "analysis",
+            "decisions",
+            "cache",
+            "output",
+            "exports",
+            "logs",
+        ):
+            (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
         project_data = {
             "schema_version": "0.1",
