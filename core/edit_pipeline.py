@@ -1,7 +1,18 @@
 from pathlib import Path
 
+from core.content_pipeline import (
+    ContentPipeline,
+    load_content_analysis,
+)
 from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
+from core.render_effects import (
+    prepare_caption_file,
+    zoom_events_for_settings,
+)
+from core.render_settings import (
+    normalize_render_settings,
+)
 from core.results import AUDIO_PATH, load_results
 from core.storage import read_json, write_json
 from editor.edit_plan import build_edit_plan, validate_edit_plan
@@ -180,22 +191,87 @@ class AutoEditPipeline:
                 "O vídeo original não foi encontrado para renderização."
             )
 
+        settings = normalize_render_settings(
+            project.get("review_settings"),
+            project,
+        )
+
+        if (
+            settings["auto_zoom"]
+            and load_content_analysis(root) is None
+        ):
+            stage(
+                "Analisando conteúdo para aplicar o estilo..."
+            )
+
+            def content_progress(value):
+                if value < 0:
+                    progress(-1)
+                else:
+                    progress(
+                        15
+                        + int(
+                            min(100, value)
+                            * 0.20
+                        )
+                    )
+
+            ContentPipeline(
+                manager=self.manager,
+                tools=self.tools,
+            ).run(
+                root,
+                cancel=cancel,
+                stage=stage,
+                progress=content_progress,
+            )
+
+        check_cancelled(cancel)
+
+        caption_file = prepare_caption_file(
+            root,
+            project,
+            plan,
+            settings,
+            self.tools,
+            source,
+        )
+        zoom_events = zoom_events_for_settings(
+            root,
+            settings,
+        )
+
         destination = _next_output_path(root)
 
         stage(
-            f"Renderizando {plan['stats']['cuts']} cortes automáticos..."
+            f"Renderizando {plan['stats']['cuts']} cortes "
+            f"com o estilo {project.get('style', 'selecionado')}..."
         )
-        progress(-1)
+        progress(35)
+
+        def render_progress(value):
+            if value < 0:
+                progress(-1)
+            else:
+                progress(
+                    35
+                    + int(
+                        min(100, value)
+                        * 0.65
+                    )
+                )
 
         rendered = self.renderer.render(
             source,
             destination,
             plan,
             cancel=cancel,
-            target_aspect_ratio=project.get(
-                "aspect_ratio"
+            target_aspect_ratio=(
+                settings["aspect_ratio"]
             ),
-            progress=progress,
+            caption_file=caption_file,
+            zoom_events=zoom_events,
+            progress=render_progress,
             stage=stage,
         )
 
@@ -216,6 +292,7 @@ class AutoEditPipeline:
                 "label",
                 "Desconhecido",
             ),
+            review_settings=settings,
         )
 
         progress(100)
@@ -227,7 +304,16 @@ class AutoEditPipeline:
                 "output_path": relative_output,
                 "edit_errors": [],
                 "reused_output": False,
-                "render_encoder": getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido"),
+                "render_encoder": getattr(
+                    getattr(
+                        self.renderer,
+                        "last_encoder",
+                        None,
+                    ),
+                    "label",
+                    "Desconhecido",
+                ),
+                "review_settings": settings,
             }
         )
         return results
