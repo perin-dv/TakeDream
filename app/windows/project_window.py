@@ -675,7 +675,7 @@ class ProjectWindow(QMainWindow):
             return
 
         try:
-            window = ReviewWindow(self.project_dir)
+            window = ReviewWindow(self.project_dir, self)
         except ValueError as error:
             QMessageBox.warning(
                 self,
