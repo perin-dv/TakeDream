@@ -192,6 +192,9 @@ class AutoEditPipeline:
             destination,
             plan,
             cancel=cancel,
+            target_aspect_ratio=project.get(
+                "aspect_ratio"
+            ),
             progress=progress,
             stage=stage,
         )

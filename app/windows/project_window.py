@@ -46,7 +46,8 @@ class ProjectWindow(QMainWindow):
 
         profile_text = (
             f"{self.project_data.get('profile', '—')}  •  "
-            f"{self.project_data.get('style', '—')}"
+            f"{self.project_data.get('style', '—')}  •  "
+            f"{self.project_data.get('aspect_ratio', '16:9')}"
         )
         profile_label = QLabel(profile_text)
         profile_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

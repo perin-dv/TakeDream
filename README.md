@@ -182,6 +182,72 @@ ou tracking automático.
 
 Exportações disponíveis: `Original`, `1080p`, `720p`, `480p` e `360p`.
 
+## Editor V3: formatos, análise de conteúdo e efeitos
+
+O formato é independente do perfil. Todo projeto pode escolher:
+
+- `16:9` horizontal;
+- `9:16` vertical;
+- `1:1` quadrado;
+- `4:5` retrato.
+
+O perfil apenas sugere um formato inicial. O usuário pode trocar o formato na
+criação do projeto ou na tela de revisão. O renderer faz crop central + escala sem
+esticar a imagem. O reframing inteligente por rosto/objeto ainda não está nesta
+versão.
+
+Na revisão, o usuário também pode ativar:
+
+- legendas automáticas `Clean`, `Dinâmica` ou `Impacto`;
+- zoom automático baseado nos momentos sugeridos pela análise de conteúdo;
+- mudança de formato antes de gerar a nova prévia.
+
+As legendas usam os word timestamps do Whisper, removem palavras que pertencem a
+trechos cortados e são convertidas para a timeline editada antes de serem queimadas
+no vídeo.
+
+### Análise de conteúdo V1
+
+O botão **ANALISAR CONTEÚDO / IA V1** usa um analisador local e determinístico.
+Ele não é apresentado como substituto de um LLM/visão. Nesta fase ele gera:
+
+- hesitações simples (`ah`, `hum`, etc.);
+- palavras repetidas em sequência;
+- frases consecutivas muito semelhantes;
+- sugestões de B-roll por palavras-chave;
+- momentos candidatos a punch zoom;
+- thumbnails cacheadas para a timeline.
+
+Arquivos gerados:
+
+```text
+analysis/
+├── content_analysis.json
+├── speech_suggestions.json
+├── broll_suggestions.json
+└── zoom_plan.json
+
+cache/
+└── thumbnails/
+    ├── manifest.json
+    └── thumb_*.jpg
+```
+
+Na timeline, os marcadores são:
+
+- laranja: possível problema/repetição de fala;
+- azul: sugestão de B-roll;
+- roxo: sugestão de zoom.
+
+As sugestões de fala e B-roll são revisáveis. A V3 não remove automaticamente
+frases apenas porque o analisador marcou uma possível repetição.
+
+O zoom automático é aplicado no render dividindo apenas os trechos necessários
+da timeline e preservando sincronismo de áudio.
+
+A exportação final mantém os perfis de qualidade `Original`, `1080p`, `720p`,
+`480p` e `360p`, respeitando o formato salvo na última prévia aprovada.
+
 ## Configuração Whisper
 
 Dependência testada: `faster-whisper==1.2.1`, Python 3.12, CPU/int8 no Windows.

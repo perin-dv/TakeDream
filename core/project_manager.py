@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from profiles import get_profile_definition
+from renderer.formats import get_aspect_ratio
 
 from core.storage import write_json
 
@@ -26,7 +27,14 @@ class ProjectManager:
         self.projects_root = Path(projects_root)
         self.projects_root.mkdir(parents=True, exist_ok=True)
 
-    def create_project(self, name, source_video, profile, style):
+    def create_project(
+        self,
+        name,
+        source_video,
+        profile,
+        style,
+        aspect_ratio=None,
+    ):
         name = name.strip()
 
         if not name:
@@ -61,14 +69,21 @@ class ProjectManager:
             (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
         profile_definition = get_profile_definition(profile)
+        selected_aspect = (
+            aspect_ratio
+            or profile_definition.aspect_ratio
+        )
+        aspect_definition = get_aspect_ratio(
+            selected_aspect
+        )
 
         project_data = {
             "schema_version": "0.1",
             "name": name,
             "profile": profile,
             "style": style,
-            "orientation": profile_definition.orientation,
-            "aspect_ratio": profile_definition.aspect_ratio,
+            "orientation": aspect_definition.orientation,
+            "aspect_ratio": aspect_definition.key,
             "status": "created",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),

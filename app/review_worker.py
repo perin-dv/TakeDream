@@ -1,10 +1,21 @@
 from threading import Event
 
-from PySide6.QtCore import QLockFile, QThread, Signal
+from PySide6.QtCore import (
+    QLockFile,
+    QThread,
+    Signal,
+)
 
-from core.export_pipeline import ExportPipeline
+from core.content_pipeline import (
+    ContentPipeline,
+)
+from core.export_pipeline import (
+    ExportPipeline,
+)
 from core.processing import ProcessingError
-from core.review_pipeline import ReviewRenderPipeline
+from core.review_pipeline import (
+    ReviewRenderPipeline,
+)
 
 
 class ReviewWorker(QThread):
@@ -20,6 +31,7 @@ class ReviewWorker(QThread):
         *,
         edit_plan=None,
         export_key=None,
+        render_settings=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -27,10 +39,16 @@ class ReviewWorker(QThread):
         self.mode = mode
         self.edit_plan = edit_plan
         self.export_key = export_key
+        self.render_settings = render_settings
         self.cancel = Event()
 
     def run(self):
-        lock = QLockFile(str(self.project_dir / ".processing.lock"))
+        lock = QLockFile(
+            str(
+                self.project_dir
+                / ".processing.lock"
+            )
+        )
         lock.setStaleLockTime(0)
 
         try:
@@ -45,12 +63,17 @@ class ReviewWorker(QThread):
                         "Nenhum plano de edição foi informado."
                     )
 
-                result = ReviewRenderPipeline().run(
-                    self.project_dir,
-                    self.edit_plan,
-                    cancel=self.cancel,
-                    stage=self.stage.emit,
-                    progress=self.progress.emit,
+                result = (
+                    ReviewRenderPipeline().run(
+                        self.project_dir,
+                        self.edit_plan,
+                        render_settings=(
+                            self.render_settings
+                        ),
+                        cancel=self.cancel,
+                        stage=self.stage.emit,
+                        progress=self.progress.emit,
+                    )
                 )
                 self.completed.emit(result)
 
@@ -60,12 +83,25 @@ class ReviewWorker(QThread):
                         "Nenhum perfil de exportação foi selecionado."
                     )
 
-                result = ExportPipeline().run(
-                    self.project_dir,
-                    self.export_key,
-                    cancel=self.cancel,
-                    stage=self.stage.emit,
-                    progress=self.progress.emit,
+                result = (
+                    ExportPipeline().run(
+                        self.project_dir,
+                        self.export_key,
+                        cancel=self.cancel,
+                        stage=self.stage.emit,
+                        progress=self.progress.emit,
+                    )
+                )
+                self.completed.emit(result)
+
+            elif self.mode == "content":
+                result = (
+                    ContentPipeline().run(
+                        self.project_dir,
+                        cancel=self.cancel,
+                        stage=self.stage.emit,
+                        progress=self.progress.emit,
+                    )
                 )
                 self.completed.emit(result)
 
@@ -75,6 +111,9 @@ class ReviewWorker(QThread):
                 )
 
         except Exception as error:
-            self.error.emit(str(error) or "Erro inesperado na revisão.")
+            self.error.emit(
+                str(error)
+                or "Erro inesperado na revisão."
+            )
         finally:
             lock.unlock()

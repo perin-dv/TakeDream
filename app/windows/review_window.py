@@ -10,6 +10,7 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
@@ -26,8 +27,11 @@ from PySide6.QtWidgets import (
 
 from app.review_worker import ReviewWorker
 from app.widgets.timeline_widget import TimelineWidget
+from core.content_pipeline import load_content_analysis
 from core.edit_pipeline import load_edit_state
 from core.project_manager import ProjectManager
+from core.render_settings import normalize_render_settings
+from media.thumbnails import load_thumbnail_manifest
 from media.waveform import load_or_create_waveform
 from editor.review import (
     adjust_removed_segment,
@@ -39,7 +43,9 @@ from editor.review import (
     source_to_edited_ms,
     split_at,
 )
+from renderer.captions import CAPTION_STYLES
 from renderer.export_profiles import EXPORT_PROFILES
+from renderer.formats import ASPECT_RATIOS
 
 
 class ReviewWindow(QMainWindow):
@@ -66,6 +72,15 @@ class ReviewWindow(QMainWindow):
         self.plan = deepcopy(state["edit_plan"])
         self.saved_plan = deepcopy(state["edit_plan"])
         self.output_path = state["output_path"]
+
+        self.saved_settings = normalize_render_settings(
+            self.project_data.get("review_settings"),
+            self.project_data,
+        )
+        self.render_settings = deepcopy(self.saved_settings)
+        self.content_analysis = load_content_analysis(
+            self.project_dir
+        )
 
         self.worker = None
         self._close_pending = False
@@ -133,10 +148,98 @@ class ReviewWindow(QMainWindow):
             Qt.AlignmentFlag.AlignCenter
         )
 
+        visual_controls = QHBoxLayout()
+        visual_controls.addWidget(QLabel("Formato:"))
+
+        self.aspect_combo = QComboBox()
+        for aspect in ASPECT_RATIOS:
+            self.aspect_combo.addItem(
+                aspect.label,
+                aspect.key,
+            )
+        aspect_index = self.aspect_combo.findData(
+            self.render_settings["aspect_ratio"]
+        )
+        if aspect_index >= 0:
+            self.aspect_combo.setCurrentIndex(
+                aspect_index
+            )
+
+        self.captions_checkbox = QCheckBox(
+            "Legendas"
+        )
+        self.captions_checkbox.setChecked(
+            self.render_settings[
+                "captions_enabled"
+            ]
+        )
+
+        self.caption_style_combo = QComboBox()
+        self.caption_style_combo.addItems(
+            CAPTION_STYLES
+        )
+        caption_index = (
+            self.caption_style_combo.findText(
+                self.render_settings[
+                    "caption_style"
+                ]
+            )
+        )
+        if caption_index >= 0:
+            self.caption_style_combo.setCurrentIndex(
+                caption_index
+            )
+
+        self.auto_zoom_checkbox = QCheckBox(
+            "Zoom automático"
+        )
+        self.auto_zoom_checkbox.setChecked(
+            self.render_settings[
+                "auto_zoom"
+            ]
+        )
+
+        visual_controls.addWidget(
+            self.aspect_combo
+        )
+        visual_controls.addWidget(
+            self.captions_checkbox
+        )
+        visual_controls.addWidget(
+            self.caption_style_combo
+        )
+        visual_controls.addWidget(
+            self.auto_zoom_checkbox
+        )
+
+        self.aspect_combo.currentIndexChanged.connect(
+            self._settings_changed
+        )
+        self.captions_checkbox.toggled.connect(
+            self._settings_changed
+        )
+        self.caption_style_combo.currentIndexChanged.connect(
+            self._settings_changed
+        )
+        self.auto_zoom_checkbox.toggled.connect(
+            self._settings_changed
+        )
+
+        self.analyze_content_button = QPushButton(
+            "ANALISAR CONTEÚDO / IA V1"
+        )
+        self.analyze_content_button.clicked.connect(
+            lambda: self._start_worker("content")
+        )
+
+        self.content_summary_label = QLabel()
+        self.content_summary_label.setWordWrap(True)
+        self._refresh_content_summary()
+
         legend = QLabel(
-            "Timeline do original: verde = mantido • "
-            "vermelho = removido • borda amarela = ajuste manual. "
-            "Clique para selecionar e posicionar."
+            "Timeline: verde = mantido • vermelho = removido • "
+            "borda amarela = ajuste manual • laranja = fala • "
+            "azul = B-roll • roxo = zoom. Clique para selecionar."
         )
         legend.setWordWrap(True)
 
@@ -159,6 +262,9 @@ class ReviewWindow(QMainWindow):
 
         self.timeline = TimelineWidget()
         self.timeline.set_plan(self.plan)
+        self.timeline.set_content_analysis(
+            self.content_analysis
+        )
         self.timeline.segmentSelected.connect(
             self._select_segment
         )
@@ -389,6 +495,9 @@ class ReviewWindow(QMainWindow):
         layout.addWidget(self.video_widget, 1)
         layout.addLayout(player_controls)
         layout.addWidget(self.summary_label)
+        layout.addLayout(visual_controls)
+        layout.addWidget(self.analyze_content_button)
+        layout.addWidget(self.content_summary_label)
         layout.addWidget(legend)
         layout.addLayout(zoom_controls)
         layout.addWidget(self.timeline_scroll)
@@ -416,6 +525,14 @@ class ReviewWindow(QMainWindow):
             )
         except (OSError, ValueError, wave.Error, EOFError):
             pass
+
+        cached_thumbnails = load_thumbnail_manifest(
+            self.project_dir
+        )
+        if cached_thumbnails:
+            self.timeline.set_thumbnails(
+                cached_thumbnails
+            )
 
         self._refresh_summary()
         self._refresh_edit_controls()
@@ -537,7 +654,7 @@ class ReviewWindow(QMainWindow):
 
     def _apply_plan(self, plan, message, select_ms=None):
         self.plan = deepcopy(plan)
-        self._dirty = self.plan != self.saved_plan
+        self._update_dirty_state()
 
         self.timeline.set_plan(self.plan)
 
@@ -763,13 +880,137 @@ class ReviewWindow(QMainWindow):
         )
 
     def _reset_review_changes(self):
-        if self.plan == self.saved_plan:
+        if (
+            self.plan == self.saved_plan
+            and self.render_settings
+            == self.saved_settings
+        ):
             return
 
-        self._push_history()
-        self._apply_plan(
-            self.saved_plan,
-            "Alterações voltaram para a última prévia.",
+        if self.plan != self.saved_plan:
+            self._push_history()
+
+        self.plan = deepcopy(self.saved_plan)
+        self.render_settings = deepcopy(
+            self.saved_settings
+        )
+        self.timeline.set_plan(self.plan)
+        self._apply_settings_to_widgets()
+        self._update_dirty_state()
+        self.status_label.setText(
+            "Alterações voltaram para a última prévia."
+        )
+        self._refresh_summary()
+        self._refresh_edit_controls()
+
+    def _current_render_settings(self):
+        return {
+            "aspect_ratio": (
+                self.aspect_combo.currentData()
+            ),
+            "captions_enabled": (
+                self.captions_checkbox.isChecked()
+            ),
+            "caption_style": (
+                self.caption_style_combo.currentText()
+            ),
+            "auto_zoom": (
+                self.auto_zoom_checkbox.isChecked()
+            ),
+        }
+
+    def _apply_settings_to_widgets(self):
+        controls = (
+            self.aspect_combo,
+            self.captions_checkbox,
+            self.caption_style_combo,
+            self.auto_zoom_checkbox,
+        )
+
+        for control in controls:
+            control.blockSignals(True)
+
+        try:
+            aspect_index = (
+                self.aspect_combo.findData(
+                    self.render_settings[
+                        "aspect_ratio"
+                    ]
+                )
+            )
+            if aspect_index >= 0:
+                self.aspect_combo.setCurrentIndex(
+                    aspect_index
+                )
+
+            self.captions_checkbox.setChecked(
+                self.render_settings[
+                    "captions_enabled"
+                ]
+            )
+
+            caption_index = (
+                self.caption_style_combo.findText(
+                    self.render_settings[
+                        "caption_style"
+                    ]
+                )
+            )
+            if caption_index >= 0:
+                self.caption_style_combo.setCurrentIndex(
+                    caption_index
+                )
+
+            self.auto_zoom_checkbox.setChecked(
+                self.render_settings[
+                    "auto_zoom"
+                ]
+            )
+        finally:
+            for control in controls:
+                control.blockSignals(False)
+
+    def _settings_changed(self, *args):
+        self.render_settings = (
+            self._current_render_settings()
+        )
+        self._update_dirty_state()
+        self.status_label.setText(
+            "Formato/efeitos alterados. Gere uma nova prévia."
+        )
+        self._refresh_edit_controls()
+
+    def _update_dirty_state(self):
+        self._dirty = (
+            self.plan != self.saved_plan
+            or self.render_settings
+            != self.saved_settings
+        )
+
+    def _refresh_content_summary(self):
+        analysis = self.content_analysis
+
+        if not analysis:
+            self.content_summary_label.setText(
+                "Conteúdo ainda não analisado. "
+                "A análise V1 gera sugestões de hesitação, "
+                "repetição, B-roll e zoom."
+            )
+            return
+
+        summary = analysis.get(
+            "summary",
+            {},
+        )
+        self.content_summary_label.setText(
+            "Análise V1 • "
+            f"Hesitações: {summary.get('fillers', 0)} • "
+            "Palavras repetidas: "
+            f"{summary.get('word_repetitions', 0)} • "
+            "Frases repetidas: "
+            f"{summary.get('possible_repetitions', 0)} • "
+            f"B-roll: {summary.get('broll_suggestions', 0)} • "
+            f"Zooms: {summary.get('zoom_events', 0)}"
         )
 
     def _refresh_summary(self):
@@ -804,6 +1045,15 @@ class ReviewWindow(QMainWindow):
         self.split_button.setEnabled(editing_enabled)
         self.mark_in_button.setEnabled(editing_enabled)
         self.mark_out_button.setEnabled(editing_enabled)
+
+        self.aspect_combo.setEnabled(editing_enabled)
+        self.captions_checkbox.setEnabled(editing_enabled)
+        self.caption_style_combo.setEnabled(
+            editing_enabled
+            and self.captions_checkbox.isChecked()
+        )
+        self.auto_zoom_checkbox.setEnabled(editing_enabled)
+        self.analyze_content_button.setEnabled(editing_enabled)
 
         self.remove_selected_button.setEnabled(
             editing_enabled
@@ -873,15 +1123,43 @@ class ReviewWindow(QMainWindow):
         self.progress_bar.setRange(0, 0)
 
         if mode == "rerender":
+            if (
+                self.auto_zoom_checkbox.isChecked()
+                and not self.content_analysis
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Análise necessária",
+                    "Execute ANALISAR CONTEÚDO / IA V1 "
+                    "antes de usar zoom automático.",
+                )
+                self._set_processing_controls(True)
+                self.progress_bar.setRange(0, 100)
+                return
+
             self.status_label.setText(
-                "Aplicando ajustes da timeline..."
+                "Aplicando timeline, formato e efeitos..."
             )
             self.worker = ReviewWorker(
                 self.project_dir,
                 "rerender",
                 edit_plan=deepcopy(self.plan),
+                render_settings=deepcopy(
+                    self.render_settings
+                ),
                 parent=self,
             )
+
+        elif mode == "content":
+            self.status_label.setText(
+                "Analisando conteúdo e preparando timeline..."
+            )
+            self.worker = ReviewWorker(
+                self.project_dir,
+                "content",
+                parent=self,
+            )
+
         else:
             export_key = self.export_combo.currentData()
             self.status_label.setText(
@@ -922,12 +1200,30 @@ class ReviewWindow(QMainWindow):
 
     def _worker_completed(self, result):
         if "output_path" in result:
-            self.plan = deepcopy(result["edit_plan"])
+            self.plan = deepcopy(
+                result["edit_plan"]
+            )
             self.saved_plan = deepcopy(
                 result["edit_plan"]
             )
-            self.output_path = result["output_path"]
-            self._dirty = False
+            self.output_path = (
+                result["output_path"]
+            )
+
+            returned_settings = (
+                result.get(
+                    "review_settings"
+                )
+                or self.render_settings
+            )
+            self.render_settings = deepcopy(
+                returned_settings
+            )
+            self.saved_settings = deepcopy(
+                returned_settings
+            )
+            self._apply_settings_to_widgets()
+            self._update_dirty_state()
 
             self.undo_stack.clear()
             self.redo_stack.clear()
@@ -937,7 +1233,9 @@ class ReviewWindow(QMainWindow):
                 "Nova prévia gerada com os ajustes."
             )
 
-            encoder = result.get("render_encoder")
+            encoder = result.get(
+                "render_encoder"
+            )
             self.status_label.setText(
                 "Nova prévia pronta para revisão."
                 + (
@@ -963,9 +1261,32 @@ class ReviewWindow(QMainWindow):
                 "Vídeo exportado",
                 f"Vídeo final criado com sucesso.\n\n"
                 f"Qualidade: {result['export_label']}\n"
+                f"Formato: "
+                f"{result.get('export_aspect_ratio', '—')}\n"
                 f"Arquivo: {result['export_path']}\n"
                 f"Processamento: "
                 f"{result.get('render_encoder', '—')}",
+            )
+
+        elif "content_analysis" in result:
+            self.content_analysis = (
+                result["content_analysis"]
+            )
+            self.timeline.set_content_analysis(
+                self.content_analysis
+            )
+            thumbnails = result.get(
+                "thumbnail_paths",
+                [],
+            )
+            if thumbnails:
+                self.timeline.set_thumbnails(
+                    thumbnails
+                )
+            self._refresh_content_summary()
+            self.status_label.setText(
+                "Análise de conteúdo pronta. "
+                "Você já pode ativar zoom automático."
             )
 
         self._set_progress(100)
@@ -1005,6 +1326,14 @@ class ReviewWindow(QMainWindow):
         self.open_folder_button.setEnabled(enabled)
         self.export_combo.setEnabled(enabled)
         self.zoom_slider.setEnabled(enabled)
+        self.aspect_combo.setEnabled(enabled)
+        self.captions_checkbox.setEnabled(enabled)
+        self.caption_style_combo.setEnabled(
+            enabled
+            and self.captions_checkbox.isChecked()
+        )
+        self.auto_zoom_checkbox.setEnabled(enabled)
+        self.analyze_content_button.setEnabled(enabled)
         self.cancel_button.setEnabled(not enabled)
 
         if not enabled:
