@@ -40,6 +40,9 @@ class MainWindow(QMainWindow):
         self.project_manager = ProjectManager()
         self.project_windows = []
         self.review_windows = []
+        self.new_project_page = None
+        self.current_project_page = None
+        self.current_review_page = None
 
         self.setWindowTitle("TakeDream")
         self.resize(1440, 900)
@@ -73,7 +76,12 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(self.sidebar)
         root_layout.addWidget(self.pages, 1)
-        self.setCentralWidget(root)
+
+        self.shell_root = root
+        self.app_stack = QStackedWidget()
+        self.app_stack.setObjectName("MainAppStack")
+        self.app_stack.addWidget(self.shell_root)
+        self.setCentralWidget(self.app_stack)
 
         self.status_label = QLabel()
         self.status_label.hide()
@@ -583,46 +591,9 @@ class MainWindow(QMainWindow):
         return frame
 
     # ------------------------------------------------------------------
-    # NAVIGATION / ACTIONS
+    # NAVIGATION / ACTIONS — SINGLE WINDOW
     # ------------------------------------------------------------------
-    def _navigate(self, target):
-        if target == "new":
-            self.create_project()
-            return
-
-        if target == "review":
-            projects = [
-                project
-                for project in self.project_manager.list_projects()
-                if project.get("output_path")
-            ]
-            if projects:
-                try:
-                    window = ReviewWindow(
-                        projects[0]["project_dir"],
-                        self,
-                    )
-                except ValueError as error:
-                    QMessageBox.warning(
-                        self,
-                        "Não foi possível abrir a revisão",
-                        str(error),
-                    )
-                    return
-
-                self.review_windows.append(window)
-                window.destroyed.connect(
-                    lambda: self._remove_review_window(window)
-                )
-                window.show()
-            else:
-                QMessageBox.information(
-                    self,
-                    "Revisão",
-                    "Abra ou processe um projeto antes de revisar a edição.",
-                )
-            return
-
+    def _show_shell_page(self, target):
         page_map = {
             "home": (0, "home"),
             "projects": (1, "projects"),
@@ -636,26 +607,92 @@ class MainWindow(QMainWindow):
         index, active = page_map[target]
         self.pages.setCurrentIndex(index)
         self.sidebar.set_active(active)
+        self.app_stack.setCurrentWidget(
+            self.shell_root
+        )
 
-
-    def create_project(self):
-        dialog = NewProjectDialog(self)
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+    def _navigate(self, target):
+        if target == "new":
+            self.create_project()
             return
 
-        data = dialog.project_data()
+        if target == "review":
+            projects = [
+                project
+                for project in self.project_manager.list_projects()
+                if project.get("output_path")
+            ]
+
+            if not projects:
+                QMessageBox.information(
+                    self,
+                    "Revisão",
+                    "Abra ou processe um projeto antes de revisar a edição.",
+                )
+                return
+
+            self._show_review_page(
+                projects[0]["project_dir"]
+            )
+            return
+
+        self._show_shell_page(target)
+
+    def _remove_page(self, page):
+        if page is None:
+            return
 
         try:
-            project_dir = self.project_manager.create_project(**data)
+            if hasattr(page, "player"):
+                page.player.stop()
+        except Exception:
+            pass
+
+        index = self.app_stack.indexOf(page)
+        if index >= 0:
+            self.app_stack.removeWidget(page)
+
+        page.deleteLater()
+
+    def create_project(self):
+        self._remove_page(
+            self.new_project_page
+        )
+
+        self.new_project_page = (
+            NewProjectDialog(
+                self.app_stack,
+                embedded=True,
+                host=self,
+            )
+        )
+        self.app_stack.addWidget(
+            self.new_project_page
+        )
+        self.app_stack.setCurrentWidget(
+            self.new_project_page
+        )
+
+    def _create_project_from_data(self, data):
+        try:
+            project_dir = (
+                self.project_manager.create_project(
+                    **data
+                )
+            )
         except ValueError as error:
-            QMessageBox.warning(self, "Não foi possível criar", str(error))
+            QMessageBox.warning(
+                self,
+                "Não foi possível criar",
+                str(error),
+            )
             return
         except OSError as error:
             QMessageBox.critical(
                 self,
                 "Erro ao criar projeto",
-                f"Falha ao criar os arquivos do projeto.\n\n{error}",
+                "Falha ao criar os arquivos do projeto."
+                f"\n\n{error}",
             )
             return
 
@@ -663,18 +700,26 @@ class MainWindow(QMainWindow):
         self._show_project_window(project_dir)
 
     def open_project(self):
-        project_file, _ = QFileDialog.getOpenFileName(
-            self,
-            "Abrir projeto TakeDream",
-            str(self.project_manager.projects_root),
-            "Projeto TakeDream (project.json)",
+        project_file, _ = (
+            QFileDialog.getOpenFileName(
+                self,
+                "Abrir projeto TakeDream",
+                str(
+                    self.project_manager.projects_root
+                ),
+                "Projeto TakeDream (project.json)",
+            )
         )
 
         if not project_file:
             return
 
         try:
-            project_dir, _ = self.project_manager.load_project(project_file)
+            project_dir, _ = (
+                self.project_manager.load_project(
+                    project_file
+                )
+            )
         except ValueError as error:
             QMessageBox.warning(
                 self,
@@ -683,31 +728,84 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._show_project_window(project_dir)
+        self._show_project_window(
+            project_dir
+        )
 
     def _show_project_window(self, project_dir):
+        self._remove_page(
+            self.current_review_page
+        )
+        self.current_review_page = None
+
+        self._remove_page(
+            self.current_project_page
+        )
+
         try:
-            window = ProjectWindow(project_dir, self)
+            page = ProjectWindow(
+                project_dir,
+                self.app_stack,
+                embedded=True,
+                host=self,
+            )
         except ValueError as error:
             QMessageBox.warning(
                 self,
                 "Projeto inválido",
                 str(error),
             )
+            self._show_shell_page("projects")
             return
 
-        self.project_windows.append(window)
-        window.destroyed.connect(
-            lambda: self._remove_project_window(window)
+        self.current_project_page = page
+        self.project_windows = [page]
+
+        self.app_stack.addWidget(page)
+        self.app_stack.setCurrentWidget(page)
+
+    def _show_review_page(self, project_dir):
+        self._remove_page(
+            self.current_review_page
         )
-        window.show()
+
+        try:
+            page = ReviewWindow(
+                project_dir,
+                self.app_stack,
+                embedded=True,
+                host=self,
+            )
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Não foi possível abrir a revisão",
+                str(error),
+            )
+            return
+
+        self.current_review_page = page
+        self.review_windows = [page]
+
+        self.app_stack.addWidget(page)
+        self.app_stack.setCurrentWidget(page)
 
     def _remove_project_window(self, window):
         if window in self.project_windows:
             self.project_windows.remove(window)
+
+        if self.current_project_page is window:
+            self.current_project_page = None
+
         self._build_all_pages()
+        self._show_shell_page("projects")
 
     def _remove_review_window(self, window):
         if window in self.review_windows:
             self.review_windows.remove(window)
+
+        if self.current_review_page is window:
+            self.current_review_page = None
+
         self._build_all_pages()
+        self._show_shell_page("home")
