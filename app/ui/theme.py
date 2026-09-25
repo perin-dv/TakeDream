@@ -22,18 +22,23 @@ REVIEW_STYLESHEET = r"""
 QMainWindow, QDialog, QWidget#Root, QWidget#AppPage {
     background: #0B1020;
     color: #F8F8FF;
-    font-family: "Segoe UI";
+    font-family: "Segoe UI Variable", "Segoe UI";
     font-size: 12px;
 }
 
 QWidget {
     color: #F8F8FF;
-    font-family: "Segoe UI";
+    font-family: "Segoe UI Variable", "Segoe UI";
 }
 
 QFrame#Sidebar {
-    background: #0E1530;
-    border-right: 1px solid #252F55;
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #0C1330,
+        stop:.60 #0E1530,
+        stop:1 #111735
+    );
+    border-right: 1px solid #28345F;
 }
 
 QFrame#FantasyPromo {
@@ -87,7 +92,8 @@ QLabel[muted="true"] {
 }
 
 QLabel#PageTitle {
-    font-size: 24px;
+    font-family: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI";
+    font-size: 25px;
     font-weight: 800;
     color: #FFFFFF;
 }
@@ -107,15 +113,6 @@ QLabel#SectionTitle {
     font-size: 13px;
     font-weight: 700;
     color: #FFFFFF;
-}
-
-QFrame#Card,
-QFrame#PlayerCard,
-QFrame#TimelineCard,
-QFrame#ExportCard {
-    background: #141C39;
-    border: 1px solid #2B3762;
-    border-radius: 14px;
 }
 
 QFrame#Card:hover {
@@ -177,7 +174,7 @@ QPushButton[secondary="true"] {
 
 QPushButton[nav="true"] {
     text-align: left;
-    padding: 10px 13px;
+    padding: 11px 14px;
     border: none;
     border-radius: 10px;
     background: transparent;
@@ -193,11 +190,12 @@ QPushButton[nav="true"]:hover {
 QPushButton[navActive="true"] {
     background: qlineargradient(
         x1:0, y1:0, x2:1, y2:0,
-        stop:0 #7C3AED,
-        stop:1 #9333EA
+        stop:0 #6D28D9,
+        stop:.55 #8B3CF0,
+        stop:1 #A737E8
     );
     color: #FFFFFF;
-    border: 1px solid #B794F4;
+    border: 1px solid #C4A7FF;
     font-weight: 800;
 }
 
@@ -230,13 +228,56 @@ QPushButton[quality="true"]:checked {
     color: white;
 }
 
+QPushButton[pipeline="true"] {
+    text-align: left;
+    padding: 10px 13px;
+    background: #171F3D;
+    border: 1px solid #34416F;
+    border-radius: 11px;
+    color: #F8F8FF;
+    font-weight: 700;
+}
+
+QPushButton[pipeline="true"]:hover {
+    background: #202A52;
+    border: 1px solid #8B5CF6;
+}
+
+QPushButton[pipeline="true"]:disabled {
+    background: #121932;
+    border: 1px solid #263158;
+    color: #6E789B;
+}
+
+QFrame#Card,
+QFrame#PlayerCard,
+QFrame#TimelineCard,
+QFrame#ExportCard {
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #151E3D,
+        stop:1 #121936
+    );
+    border: 1px solid #2B3762;
+    border-radius: 14px;
+}
+
+QFrame#PlayerCard {
+    border: 1px solid #354475;
+}
+
+QFrame#ExportCard {
+    background: #131B38;
+    border: 1px solid #354475;
+}
+
 QComboBox,
 QDoubleSpinBox,
 QLineEdit {
     background: #171F3D;
-    border: 1px solid #34416F;
-    border-radius: 8px;
-    padding: 7px 10px;
+    border: 1px solid #3A4774;
+    border-radius: 9px;
+    padding: 8px 11px;
     color: #F8F8FF;
 }
 
@@ -330,6 +371,18 @@ QScrollBar:horizontal {
 QScrollBar::handle:horizontal {
     background: #4D5782;
     min-width: 30px;
+    border-radius: 5px;
+}
+
+QScrollBar:vertical {
+    background: #10162A;
+    width: 10px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical {
+    background: #4D5782;
+    min-height: 30px;
     border-radius: 5px;
 }
 
