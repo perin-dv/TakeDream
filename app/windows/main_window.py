@@ -464,21 +464,25 @@ class MainWindow(QMainWindow):
         cards = (
             (
                 "Aparência",
+                "sparkles",
                 "Tema TakeDream",
                 "O redesign fantasia está ativo em todo o programa.",
             ),
             (
                 "Processamento",
+                "settings",
                 "GPU automática",
                 "NVIDIA, Intel ou AMD quando disponível, com fallback para CPU.",
             ),
             (
                 "Transcrição",
+                "podcast",
                 "Faster Whisper",
                 "Modelo e dispositivo continuam configuráveis por ambiente.",
             ),
             (
                 "Projetos",
+                "projects",
                 str(self.project_manager.projects_root),
                 "Pasta padrão onde o TakeDream mantém seus projetos.",
             ),
@@ -487,12 +491,12 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setSpacing(12)
 
-        for index, (title, value, description) in enumerate(cards):
+        for index, (title, icon_name, value, description) in enumerate(cards):
             frame = card()
             box = QVBoxLayout(frame)
             box.setContentsMargins(16, 14, 16, 14)
 
-            box.addWidget(section_title(title))
+            box.addWidget(section_title(title, icon_name))
             value_label = QLabel(value)
             value_label.setStyleSheet(
                 "font-size:15px; font-weight:800; color:#FFFFFF;"
