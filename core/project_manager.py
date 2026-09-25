@@ -3,6 +3,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from profiles import get_profile_definition
+
 from core.storage import write_json
 
 
@@ -58,11 +60,15 @@ class ProjectManager:
         ):
             (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
+        profile_definition = get_profile_definition(profile)
+
         project_data = {
             "schema_version": "0.1",
             "name": name,
             "profile": profile,
             "style": style,
+            "orientation": profile_definition.orientation,
+            "aspect_ratio": profile_definition.aspect_ratio,
             "status": "created",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),

@@ -40,6 +40,13 @@ EXPORT_PROFILES = (
         crf=21,
         audio_bitrate="128k",
     ),
+    ExportProfile(
+        key="360p",
+        label="360p",
+        height=360,
+        crf=22,
+        audio_bitrate="96k",
+    ),
 )
 
 
