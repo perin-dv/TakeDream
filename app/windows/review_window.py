@@ -67,6 +67,7 @@ class ReviewWindow(QMainWindow):
         self._redo_stack = []
         self._mark_in_ms = None
         self._mark_out_ms = None
+        self._shortcuts = []
 
         self.setWindowTitle(
             f"TakeDream — Revisão — {self.project_data['name']}"
@@ -269,11 +270,18 @@ class ReviewWindow(QMainWindow):
         self._refresh_controls()
 
     def _install_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+Z"), self, activated=self._undo)
-        QShortcut(QKeySequence("Ctrl+Y"), self, activated=self._redo)
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=self._split_at_playhead)
-        QShortcut(QKeySequence("Delete"), self, activated=self._remove_selected_segment)
-        QShortcut(QKeySequence("Space"), self, activated=self._toggle_playback)
+        shortcuts = (
+            ("Ctrl+Z", self._undo),
+            ("Ctrl+Y", self._redo),
+            ("Ctrl+K", self._split_at_playhead),
+            ("Delete", self._remove_selected_segment),
+            ("Space", self._toggle_playback),
+        )
+
+        for sequence, callback in shortcuts:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(callback)
+            self._shortcuts.append(shortcut)
 
     def _load_current_preview(self):
         path = (self.project_dir / self.output_path).resolve()
