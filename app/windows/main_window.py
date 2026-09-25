@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -24,6 +24,7 @@ from app.ui.components import (
     muted_label,
     section_title,
 )
+from app.ui.icons import app_icon, icon_pixmap
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
@@ -165,7 +166,10 @@ class MainWindow(QMainWindow):
             "Crie, revise e exporte seus vídeos em um único lugar.",
         )
 
-        refresh_button = QPushButton("↻  Atualizar")
+        refresh_button = QPushButton("Atualizar")
+        refresh_button.setIcon(
+            app_icon("refresh", color="#EDE9FE", accent="#A855F7", size=17)
+        )
         refresh_button.clicked.connect(self._build_all_pages)
         header.addWidget(refresh_button)
 
@@ -178,7 +182,7 @@ class MainWindow(QMainWindow):
         hero_text = QVBoxLayout()
         hero_text.setSpacing(8)
 
-        eyebrow = QLabel("✦  EDIÇÃO INTELIGENTE")
+        eyebrow = QLabel("EDIÇÃO INTELIGENTE")
         eyebrow.setStyleSheet(
             "color:#C084FC; font-weight:800; letter-spacing:1px;"
         )
@@ -196,11 +200,13 @@ class MainWindow(QMainWindow):
         )
 
         actions = QHBoxLayout()
-        new_button = QPushButton("＋  Novo Projeto  →")
+        new_button = QPushButton("Novo Projeto")
+        new_button.setIcon(app_icon("plus", color="#FFFFFF", accent="#FFFFFF", size=18))
         new_button.setProperty("primary", True)
         new_button.clicked.connect(self.create_project)
 
-        open_button = QPushButton("▣  Abrir projeto existente")
+        open_button = QPushButton("Abrir projeto existente")
+        open_button.setIcon(app_icon("folder", color="#EDE9FE", accent="#A855F7", size=18))
         open_button.setProperty("secondary", True)
         open_button.clicked.connect(self.open_project)
 
@@ -224,15 +230,28 @@ class MainWindow(QMainWindow):
         )
         art_layout = QVBoxLayout(hero_art)
         art_layout.setContentsMargins(22, 18, 22, 18)
-        art_layout.addWidget(
-            QLabel(
-                "✦     ◈        ✧\n\n"
-                "          ☾\n\n"
-                "    ⚔    ✨    🏰\n\n"
-                "         ◉"
-            ),
-            alignment=Qt.AlignmentFlag.AlignCenter,
-        )
+        art_icons = QHBoxLayout()
+        art_icons.setSpacing(18)
+        for icon_name, icon_size in (
+            ("star", 34),
+            ("brand", 62),
+            ("sparkles", 34),
+        ):
+            art_icon = QLabel()
+            art_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            art_icon.setPixmap(
+                icon_pixmap(
+                    icon_name,
+                    color="#FFFFFF",
+                    accent="#D8B4FE",
+                    size=icon_size,
+                )
+            )
+            art_icons.addWidget(art_icon)
+
+        art_layout.addStretch(1)
+        art_layout.addLayout(art_icons)
+        art_layout.addStretch(1)
         art_caption = QLabel("Crie histórias. Não só cortes.")
         art_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         art_caption.setStyleSheet(
@@ -282,7 +301,7 @@ class MainWindow(QMainWindow):
             box.addWidget(desc)
             quick.addWidget(frame, 1)
 
-        layout.addWidget(section_title("⚡  Fluxo rápido"))
+        layout.addWidget(section_title("Fluxo rápido", "sparkles"))
         layout.addLayout(quick)
 
         lower = QHBoxLayout()
@@ -293,7 +312,7 @@ class MainWindow(QMainWindow):
         recent_layout.setContentsMargins(14, 14, 14, 14)
 
         title_row = QHBoxLayout()
-        title_row.addWidget(section_title("◷  Continuar projeto"))
+        title_row.addWidget(section_title("Continuar projeto", "projects"))
         title_row.addStretch(1)
         see_projects = QPushButton("Ver todos  →")
         see_projects.clicked.connect(lambda: self._navigate("projects"))
@@ -320,7 +339,7 @@ class MainWindow(QMainWindow):
         export_layout.setContentsMargins(14, 14, 14, 14)
 
         export_title = QHBoxLayout()
-        export_title.addWidget(section_title("⇧  Exportações recentes"))
+        export_title.addWidget(section_title("Exportações recentes", "export"))
         export_title.addStretch(1)
         see_exports = QPushButton("Ver todas")
         see_exports.clicked.connect(lambda: self._navigate("exports"))
@@ -347,12 +366,14 @@ class MainWindow(QMainWindow):
             "Continue um trabalho existente ou comece algo novo.",
         )
 
-        new_button = QPushButton("＋  Novo Projeto")
+        new_button = QPushButton("Novo Projeto")
+        new_button.setIcon(app_icon("plus", color="#FFFFFF", accent="#FFFFFF", size=18))
         new_button.setProperty("primary", True)
         new_button.clicked.connect(self.create_project)
         header.addWidget(new_button)
 
         browse_button = QPushButton("Abrir project.json")
+        browse_button.setIcon(app_icon("folder", color="#EDE9FE", accent="#A855F7", size=17))
         browse_button.clicked.connect(self.open_project)
         header.addWidget(browse_button)
 
@@ -442,22 +463,22 @@ class MainWindow(QMainWindow):
 
         cards = (
             (
-                "🎨  Aparência",
+                "Aparência",
                 "Tema TakeDream",
                 "O redesign fantasia está ativo em todo o programa.",
             ),
             (
-                "⚡  Processamento",
+                "Processamento",
                 "GPU automática",
                 "NVIDIA, Intel ou AMD quando disponível, com fallback para CPU.",
             ),
             (
-                "📝  Transcrição",
+                "Transcrição",
                 "Faster Whisper",
                 "Modelo e dispositivo continuam configuráveis por ambiente.",
             ),
             (
-                "📁  Projetos",
+                "Projetos",
                 str(self.project_manager.projects_root),
                 "Pasta padrão onde o TakeDream mantém seus projetos.",
             ),
@@ -499,16 +520,41 @@ class MainWindow(QMainWindow):
         box.setContentsMargins(12, 12, 12, 12)
         box.setSpacing(7)
 
-        preview = QLabel("✦   ◈   ☾   🏰")
+        preview = QLabel()
         preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview.setMinimumHeight(62 if large else 48)
+        preview.setMinimumHeight(82 if large else 62)
         preview.setStyleSheet(
             "background:qlineargradient("
             "x1:0,y1:0,x2:1,y2:1,"
             "stop:0 #2B1E68, stop:0.55 #173B61, stop:1 #4D1F6D);"
             "border:1px solid #4B5790; border-radius:10px;"
-            "font-size:19px; color:#E9D5FF;"
         )
+
+        thumbnails = sorted(
+            (project["project_dir"] / "cache" / "thumbnails").glob(
+                "thumb_*.jpg"
+            )
+        )
+        if thumbnails:
+            pixmap = QPixmap(str(thumbnails[0]))
+            if not pixmap.isNull():
+                preview.setPixmap(
+                    pixmap.scaled(
+                        320 if large else 220,
+                        120 if large else 85,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+        else:
+            preview.setPixmap(
+                icon_pixmap(
+                    "brand",
+                    color="#FFFFFF",
+                    accent="#C084FC",
+                    size=42 if large else 32,
+                )
+            )
 
         name = QLabel(project["name"])
         name.setStyleSheet(
@@ -523,7 +569,8 @@ class MainWindow(QMainWindow):
         source = muted_label(project["source_filename"])
         source.setToolTip(project["source_filename"])
 
-        open_button = QPushButton("Abrir projeto  →")
+        open_button = QPushButton("Abrir projeto")
+        open_button.setIcon(app_icon("folder", color="#EDE9FE", accent="#A855F7", size=16))
         open_button.setProperty("secondary", True)
         open_button.clicked.connect(
             lambda checked=False, path=project["project_dir"]:
@@ -546,12 +593,19 @@ class MainWindow(QMainWindow):
         row.setContentsMargins(10, 9, 10, 9)
         row.setSpacing(10)
 
-        badge = QLabel("✓")
+        badge = QLabel()
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge.setFixedSize(34, 34)
         badge.setStyleSheet(
-            "background:#136A58; color:#D1FAE5;"
-            "border-radius:9px; font-weight:900;"
+            "background:#136A58; border-radius:9px;"
+        )
+        badge.setPixmap(
+            icon_pixmap(
+                "check",
+                color="#FFFFFF",
+                accent="#FFFFFF",
+                size=18,
+            )
         )
 
         texts = QVBoxLayout()
@@ -571,6 +625,7 @@ class MainWindow(QMainWindow):
             row.addWidget(size)
 
         open_button = QPushButton("Abrir")
+        open_button.setIcon(app_icon("play", color="#EDE9FE", accent="#A855F7", size=15))
         open_button.clicked.connect(
             lambda checked=False, path=item["path"]:
             QDesktopServices.openUrl(
@@ -580,6 +635,7 @@ class MainWindow(QMainWindow):
         row.addWidget(open_button)
 
         folder_button = QPushButton("Pasta")
+        folder_button.setIcon(app_icon("folder", color="#EDE9FE", accent="#A855F7", size=15))
         folder_button.clicked.connect(
             lambda checked=False, path=item["path"].parent:
             QDesktopServices.openUrl(
