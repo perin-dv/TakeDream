@@ -64,9 +64,18 @@ from renderer.formats import ASPECT_RATIOS
 
 
 class ReviewWindow(QMainWindow):
-    def __init__(self, project_dir, parent=None):
+    def __init__(
+        self,
+        project_dir,
+        parent=None,
+        *,
+        embedded=False,
+        host=None,
+    ):
         super().__init__(parent)
 
+        self.embedded = embedded
+        self.host = host
         self.project_manager = ProjectManager()
         self.project_dir, self.project_data = (
             self.project_manager.load_project(project_dir)
@@ -906,6 +915,14 @@ class ReviewWindow(QMainWindow):
 
     def _sidebar_nav(self, target):
         if target == "review":
+            return
+
+        if self.host is not None and hasattr(
+            self.host,
+            "_navigate",
+        ):
+            self.player.pause()
+            self.host._navigate(target)
             return
 
         parent = self.parent()
