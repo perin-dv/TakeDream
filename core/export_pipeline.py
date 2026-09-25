@@ -175,7 +175,7 @@ class ExportPipeline:
             "export_label": profile.label,
             "export_mode": export_mode,
             "render_encoder": (
-                self.renderer.last_encoder.label
+                getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido")
                 if export_mode == "render"
                 else "Smart Copy"
             ),
