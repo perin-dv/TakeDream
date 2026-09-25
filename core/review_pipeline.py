@@ -94,5 +94,5 @@ class ReviewRenderPipeline:
         return {
             "edit_plan": edit_plan,
             "output_path": relative_output,
-            "render_encoder": self.renderer.last_encoder.label,
+            "render_encoder": getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido"),
         }
