@@ -76,6 +76,12 @@ class ReviewWindow(QMainWindow):
 
         self.embedded = embedded
         self.host = host
+
+        if embedded:
+            self.setWindowFlags(
+                Qt.WindowType.Widget
+            )
+
         self.project_manager = ProjectManager()
         self.project_dir, self.project_data = (
             self.project_manager.load_project(project_dir)
@@ -887,7 +893,8 @@ class ReviewWindow(QMainWindow):
         )
 
         apply_review_theme(self)
-        enable_dark_title_bar(self)
+        if not embedded:
+            enable_dark_title_bar(self)
 
         self._load_current_preview()
 
