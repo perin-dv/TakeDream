@@ -17,6 +17,10 @@ from profiles import (
     profile_names,
     styles_for_profile,
 )
+from renderer.formats import (
+    ASPECT_RATIOS,
+    get_aspect_ratio,
+)
 
 
 class NewProjectDialog(QDialog):
@@ -46,6 +50,13 @@ class NewProjectDialog(QDialog):
 
         self.style_combo = QComboBox()
 
+        self.aspect_combo = QComboBox()
+        for aspect in ASPECT_RATIOS:
+            self.aspect_combo.addItem(
+                aspect.label,
+                aspect.key,
+            )
+
         self.profile_description = QLabel()
         self.profile_description.setWordWrap(True)
         self.profile_description.setAlignment(
@@ -58,6 +69,7 @@ class NewProjectDialog(QDialog):
         form.addRow("Vídeo:", video_layout)
         form.addRow("Perfil:", self.profile_combo)
         form.addRow("Estilo:", self.style_combo)
+        form.addRow("Formato:", self.aspect_combo)
         form.addRow("Descrição:", self.profile_description)
 
         self.create_button = QPushButton("Criar Projeto")
@@ -88,9 +100,21 @@ class NewProjectDialog(QDialog):
             if definition.orientation == "vertical"
             else "Horizontal"
         )
+        suggested_index = self.aspect_combo.findData(
+            definition.aspect_ratio
+        )
+        if suggested_index >= 0:
+            self.aspect_combo.setCurrentIndex(
+                suggested_index
+            )
+
+        aspect = get_aspect_ratio(
+            definition.aspect_ratio
+        )
         self.profile_description.setText(
             f"{definition.description}\n"
-            f"Formato base: {orientation} • {definition.aspect_ratio}."
+            f"Sugestão do perfil: {orientation} • "
+            f"{aspect.label}. Você pode escolher outro formato."
         )
 
     def select_video(self):
@@ -130,4 +154,5 @@ class NewProjectDialog(QDialog):
             "source_video": self.video_input.text().strip(),
             "profile": self.profile_combo.currentText(),
             "style": self.style_combo.currentText(),
+            "aspect_ratio": self.aspect_combo.currentData(),
         }
