@@ -25,6 +25,7 @@ from app.ui.components import (
 )
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
+from app.ui.windows import enable_dark_title_bar
 from app.windows.review_window import ReviewWindow
 from core.project_manager import ProjectManager
 from media.ffmpeg_tools import FFmpegTools
@@ -399,6 +400,7 @@ class ProjectWindow(QMainWindow):
         self.setCentralWidget(root)
 
         apply_app_theme(self)
+        enable_dark_title_bar(self)
 
         self._update_ffmpeg_status()
         self._load_saved_metadata()
