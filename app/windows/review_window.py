@@ -38,6 +38,7 @@ from app.ui.components import (
     quality_button,
     section_title,
 )
+from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_review_theme
 from app.widgets.timeline_widget import TimelineWidget
 from core.content_pipeline import load_content_analysis
@@ -116,89 +117,10 @@ class ReviewWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # ==============================================================
-        # SIDEBAR
-        # ==============================================================
-        sidebar = QFrame()
-        sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(205)
-
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(18, 24, 18, 20)
-        sidebar_layout.setSpacing(8)
-
-        brand = QLabel("☁  TakeDream")
-        brand.setObjectName("Brand")
-        brand.setStyleSheet(
-            "font-size:24px; font-weight:800; color:#FFFFFF;"
+        self.sidebar = TakeDreamSidebar("review")
+        self.sidebar.navigate.connect(
+            self._sidebar_nav
         )
-        brand_subtitle = muted_label(
-            "Transforme vídeos\nem histórias incríveis."
-        )
-
-        sidebar_layout.addWidget(brand)
-        sidebar_layout.addWidget(brand_subtitle)
-        sidebar_layout.addSpacing(24)
-
-        nav_items = (
-            ("⌂", "Início", False),
-            ("＋", "Novo Projeto", False),
-            ("▣", "Projetos", False),
-            ("✂", "Revisão", True),
-            ("⇧", "Exportações", False),
-            ("⚙", "Configurações", False),
-        )
-        for icon_text, text, active in nav_items:
-            button = nav_button(
-                icon_text,
-                text,
-                active=active,
-            )
-            if not active:
-                button.clicked.connect(
-                    lambda checked=False, name=text:
-                    self.status_label.setText(
-                        f"{name}: navegação visual preparada "
-                        "para o próximo redesign."
-                    )
-                )
-            sidebar_layout.addWidget(button)
-
-        sidebar_layout.addStretch(1)
-
-        dream_card = QFrame()
-        dream_card.setObjectName("Card")
-        dream_card.setStyleSheet(
-            "QFrame#Card {"
-            "background:qlineargradient("
-            "x1:0,y1:0,x2:1,y2:1,"
-            "stop:0 #24155B, stop:1 #3B1C70);"
-            "border:1px solid #7C5CE7;"
-            "border-radius:14px;}"
-        )
-        dream_layout = QVBoxLayout(dream_card)
-        dream_layout.setContentsMargins(14, 14, 14, 14)
-        dream_layout.setSpacing(6)
-
-        dream_title = QLabel("✦  Crie. Edite. Sonhe.")
-        dream_title.setStyleSheet(
-            "font-weight:800; color:#FFFFFF; font-size:13px;"
-        )
-        dream_text = muted_label(
-            "A IA monta o primeiro corte.\n"
-            "Você controla o resultado.",
-            True,
-        )
-        dream_art = QLabel("✧  ⚔  ✦  ◈")
-        dream_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dream_art.setStyleSheet(
-            "font-size:22px; color:#D8B4FE; padding-top:6px;"
-        )
-
-        dream_layout.addWidget(dream_title)
-        dream_layout.addWidget(dream_text)
-        dream_layout.addWidget(dream_art)
-        sidebar_layout.addWidget(dream_card)
 
         # ==============================================================
         # MAIN CONTENT WRAPPER
@@ -912,7 +834,7 @@ class ReviewWindow(QMainWindow):
             alignment=Qt.AlignmentFlag.AlignRight,
         )
 
-        root_layout.addWidget(sidebar)
+        root_layout.addWidget(self.sidebar)
         root_layout.addWidget(content, 1)
         self.setCentralWidget(root)
 
@@ -966,6 +888,26 @@ class ReviewWindow(QMainWindow):
         self._sync_caption_style_buttons()
         self._refresh_summary()
         self._refresh_edit_controls()
+
+    def _sidebar_nav(self, target):
+        if target == "review":
+            return
+
+        parent = self.parent()
+        if parent is not None and hasattr(
+            parent,
+            "_sidebar_nav",
+        ):
+            parent._sidebar_nav(target)
+            self.close()
+            return
+
+        if parent is not None and hasattr(
+            parent,
+            "_navigate",
+        ):
+            self.close()
+            parent._navigate(target)
 
     def _select_aspect_ratio(self, key):
         index = self.aspect_combo.findData(key)
