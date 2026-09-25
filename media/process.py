@@ -1,5 +1,7 @@
 """Run real media tools without a console window; cancellation kills the child."""
+import queue
 import subprocess
+import threading
 import time
 
 from core.processing import ProcessingError, check_cancelled
@@ -53,6 +55,19 @@ def run_media(command, cancel=None, timeout=None):
     return stdout, stderr
 
 
+def _stdout_reader(stream, output_queue):
+    try:
+        for line in iter(stream.readline, ""):
+            output_queue.put(line)
+    finally:
+        output_queue.put(None)
+
+
+def _stderr_reader(stream, output):
+    for line in iter(stream.readline, ""):
+        output.append(line)
+
+
 def run_media_progress(
     command,
     *,
@@ -72,7 +87,8 @@ def run_media_progress(
         command[1:1] = ["-progress", "pipe:1", "-nostats"]
 
     total_us = duration_ms * 1000
-    stderr_text = ""
+    progress_queue = queue.Queue()
+    stderr_lines = []
 
     try:
         with subprocess.Popen(
@@ -85,8 +101,22 @@ def run_media_progress(
             bufsize=1,
             creationflags=_creation_flags(),
         ) as process:
+            stdout_thread = threading.Thread(
+                target=_stdout_reader,
+                args=(process.stdout, progress_queue),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=_stderr_reader,
+                args=(process.stderr, stderr_lines),
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+
             started = time.monotonic()
             last_value = -1
+            stdout_finished = False
 
             try:
                 while True:
@@ -97,11 +127,17 @@ def run_media_progress(
                             "A ferramenta de mídia excedeu o tempo limite."
                         )
 
-                    line = process.stdout.readline()
+                    try:
+                        line = progress_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        line = ""
 
-                    if line:
+                    if line is None:
+                        stdout_finished = True
+
+                    elif line:
                         key, separator, value = line.strip().partition("=")
-                        if separator and key == "out_time_us":
+                        if separator and key in ("out_time_us", "out_time_ms"):
                             try:
                                 current_us = max(0, int(value))
                             except ValueError:
@@ -116,22 +152,22 @@ def run_media_progress(
                                 last_value = percent
                                 progress(percent)
 
-                    elif process.poll() is not None:
+                    if process.poll() is not None and stdout_finished:
                         break
-                    else:
-                        time.sleep(0.05)
 
-                stderr_text = process.stderr.read() or ""
+                return_code = process.wait()
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
 
             except BaseException:
                 process.kill()
                 try:
-                    process.communicate(timeout=2)
+                    process.wait(timeout=2)
                 except subprocess.SubprocessError:
                     pass
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
                 raise
-
-            return_code = process.wait()
 
     except OSError as error:
         raise ProcessingError(
@@ -140,6 +176,7 @@ def run_media_progress(
 
     check_cancelled(cancel)
 
+    stderr_text = "".join(stderr_lines)
     if return_code:
         raise ProcessingError(
             f"Falha no processamento de mídia:\n"
