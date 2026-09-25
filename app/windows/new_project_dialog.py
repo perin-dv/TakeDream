@@ -37,6 +37,7 @@ from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
 from profiles import (
     get_profile_definition,
+    get_style_preset,
     profile_names,
     styles_for_profile,
 )
@@ -273,8 +274,9 @@ class NewProjectDialog(QDialog):
             )
         )
 
-        self.style_buttons_layout = QHBoxLayout()
-        self.style_buttons_layout.setSpacing(8)
+        self.style_buttons_layout = QGridLayout()
+        self.style_buttons_layout.setHorizontalSpacing(8)
+        self.style_buttons_layout.setVerticalSpacing(8)
         self.style_group = QButtonGroup(self)
         self.style_group.setExclusive(True)
         self.style_buttons = {}
@@ -619,75 +621,65 @@ class NewProjectDialog(QDialog):
         self.style_group.setExclusive(True)
         self.style_buttons = {}
 
-        descriptions = {
-            "Clean": "Limpo e moderno",
-            "Dinâmico": "Ritmo acelerado",
-            "Conversa": "Natural",
-            "Highlights": "Melhores momentos",
-            "Didático": "Clareza e ensino",
-            "Conversão": "Foco em retenção",
-            "Premium": "Visual sofisticado",
-            "Highlight": "Resumo emocional",
-            "Cinematográfico": "Ritmo de filme",
-        }
-
-        style_icons = {
-            "Clean": "clean",
-            "Dinâmico": "dynamic",
-            "Conversa": "podcast",
-            "Highlights": "highlights",
-            "Didático": "course",
-            "Conversão": "vsl",
-            "Premium": "premium",
-            "Highlight": "highlights",
-            "Cinematográfico": "star",
-        }
-        style_accents = {
-            "Clean": "#38BDF8",
-            "Dinâmico": "#D946EF",
-            "Conversa": "#6366F1",
-            "Highlights": "#A855F7",
-            "Didático": "#3B82F6",
-            "Conversão": "#EC4899",
-            "Premium": "#D4A54A",
-            "Highlight": "#C084FC",
-            "Cinematográfico": "#E879F9",
-        }
-
-        for style in styles:
+        for index, style in enumerate(styles):
+            preset = get_style_preset(style)
             button = SelectionCardButton(
                 style,
-                descriptions.get(
-                    style,
-                    "Estilo personalizado",
-                ),
-                style_icons.get(style, "sparkles"),
-                accent=style_accents.get(style, "#8B5CF6"),
+                preset.description,
+                preset.icon,
+                accent=preset.accent,
                 light=True,
             )
-            button.setMinimumHeight(88)
+            button.setMinimumHeight(92)
+            button.setToolTip(
+                f"{preset.description}\n"
+                f"Zoom: {'automático' if preset.auto_zoom else 'discreto/manual'} • "
+                f"Legenda: {preset.caption_style}"
+            )
             self.style_group.addButton(button)
             self.style_buttons[style] = button
             button.clicked.connect(
                 lambda checked=False, name=style:
                 self._set_style(name)
             )
-            self.style_buttons_layout.addWidget(button)
+            self.style_buttons_layout.addWidget(
+                button,
+                index // 3,
+                index % 3,
+            )
 
         self._set_style(styles[0])
 
     def _set_style(self, style):
         self.selected_style = style
+        preset = get_style_preset(style)
 
         style_index = self.style_combo.findText(style)
         if style_index >= 0:
             blocked = self.style_combo.blockSignals(True)
             self.style_combo.setCurrentIndex(style_index)
             self.style_combo.blockSignals(blocked)
+
         for name, button in self.style_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(name == style)
             button.blockSignals(blocked)
+
+        self.caption_style = preset.caption_style
+
+        if hasattr(self, "captions_checkbox"):
+            blocked = self.captions_checkbox.blockSignals(True)
+            self.captions_checkbox.setChecked(
+                preset.captions_enabled
+            )
+            self.captions_checkbox.blockSignals(blocked)
+
+        if hasattr(self, "auto_zoom_checkbox"):
+            blocked = self.auto_zoom_checkbox.blockSignals(True)
+            self.auto_zoom_checkbox.setChecked(
+                preset.auto_zoom
+            )
+            self.auto_zoom_checkbox.blockSignals(blocked)
 
     def _set_aspect(self, aspect):
         self.selected_aspect = aspect
