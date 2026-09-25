@@ -2,9 +2,15 @@ import os
 import tempfile
 from pathlib import Path
 
-from core.processing import ProcessingError, check_cancelled
+from core.processing import ProcessingCancelled, ProcessingError, check_cancelled
 from editor.edit_plan import kept_segments, validate_edit_plan
-from media.process import run_media
+from media.process import run_media_progress
+from renderer.hardware import (
+    CPU_ENCODER,
+    cpu_encoder_args,
+    hardware_encoder_args,
+    select_h264_encoder,
+)
 
 
 def _seconds(milliseconds):
@@ -51,9 +57,47 @@ def build_filter_graph(edit_plan, output_height=None):
     return ";\n".join(filters)
 
 
+def _render_command(
+    ffmpeg_path,
+    source,
+    script_path,
+    output_path,
+    *,
+    encoder_args,
+    audio_bitrate,
+):
+    return [
+        ffmpeg_path,
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-i",
+        str(source),
+        "-/filter_complex",
+        str(script_path),
+        "-map",
+        "[outv]",
+        "-map",
+        "[outa]",
+        *encoder_args,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        str(audio_bitrate),
+        "-movflags",
+        "+faststart",
+        "-y",
+        str(output_path),
+    ]
+
+
 class FFmpegRenderer:
     def __init__(self, ffmpeg_tools):
         self.tools = ffmpeg_tools
+        self.last_encoder = CPU_ENCODER
 
     def render(
         self,
@@ -66,6 +110,9 @@ class FFmpegRenderer:
         crf=20,
         audio_bitrate="192k",
         preset="veryfast",
+        progress=lambda value: None,
+        stage=lambda text: None,
+        prefer_hardware=True,
     ):
         validate_edit_plan(edit_plan)
         check_cancelled(cancel)
@@ -119,44 +166,88 @@ class FFmpegRenderer:
         os.close(output_fd)
         Path(temporary_output).unlink(missing_ok=True)
 
+        expected_duration_ms = edit_plan["stats"]["estimated_duration_ms"]
+
         try:
             Path(script_path).write_text(
                 build_filter_graph(edit_plan, effective_height),
                 encoding="utf-8",
             )
 
-            run_media(
-                [
+            encoder = (
+                select_h264_encoder(
                     self.tools.ffmpeg_path,
-                    "-hide_banner",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    "-i",
-                    str(source),
-                    "-/filter_complex",
-                    str(script_path),
-                    "-map",
-                    "[outv]",
-                    "-map",
-                    "[outa]",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    str(preset),
-                    "-crf",
-                    str(int(crf)),
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    str(audio_bitrate),
-                    "-movflags",
-                    "+faststart",
-                    "-y",
-                    str(temporary_output),
-                ],
-                cancel=cancel,
+                    cancel=cancel,
+                )
+                if prefer_hardware
+                else CPU_ENCODER
             )
+
+            if encoder.hardware:
+                encoder_args = hardware_encoder_args(
+                    encoder,
+                    quality=crf,
+                )
+                stage(f"Renderizando com aceleração por GPU: {encoder.label}...")
+            else:
+                encoder_args = cpu_encoder_args(
+                    preset=preset,
+                    quality=crf,
+                )
+                stage("Renderizando pela CPU...")
+
+            command = _render_command(
+                self.tools.ffmpeg_path,
+                source,
+                script_path,
+                temporary_output,
+                encoder_args=encoder_args,
+                audio_bitrate=audio_bitrate,
+            )
+
+            try:
+                run_media_progress(
+                    command,
+                    duration_ms=expected_duration_ms,
+                    progress=progress,
+                    cancel=cancel,
+                )
+                self.last_encoder = encoder
+
+            except ProcessingCancelled:
+                raise
+
+            except ProcessingError:
+                if not encoder.hardware:
+                    raise
+
+                Path(temporary_output).unlink(missing_ok=True)
+                progress(0)
+                stage(
+                    f"{encoder.label} falhou neste vídeo. "
+                    "Continuando automaticamente pela CPU..."
+                )
+
+                cpu_args = cpu_encoder_args(
+                    preset=preset,
+                    quality=crf,
+                )
+                fallback_command = _render_command(
+                    self.tools.ffmpeg_path,
+                    source,
+                    script_path,
+                    temporary_output,
+                    encoder_args=cpu_args,
+                    audio_bitrate=audio_bitrate,
+                )
+
+                run_media_progress(
+                    fallback_command,
+                    duration_ms=expected_duration_ms,
+                    progress=progress,
+                    cancel=cancel,
+                )
+                self.last_encoder = CPU_ENCODER
 
             check_cancelled(cancel)
 
@@ -177,12 +268,9 @@ class FFmpegRenderer:
                     "O vídeo renderizado possui duração inválida."
                 )
 
-            if os.name == "nt":
-                os.rename(temporary_output, destination)
-            else:
-                os.link(temporary_output, destination)
-
+            os.replace(temporary_output, destination)
             return destination
+
         finally:
             Path(script_path).unlink(missing_ok=True)
             Path(temporary_output).unlink(missing_ok=True)
