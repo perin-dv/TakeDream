@@ -1,5 +1,6 @@
 from copy import deepcopy
 
+from profiles import get_style_preset
 from renderer.captions import CAPTION_STYLES
 from renderer.formats import (
     get_aspect_ratio,
@@ -20,13 +21,31 @@ def default_render_settings(project):
     except ValueError:
         aspect_ratio = "16:9"
 
+    captions_enabled = False
+    caption_style = DEFAULT_CAPTION_STYLE
+    auto_zoom = False
+
+    try:
+        preset = get_style_preset(
+            project.get("style", "Clean")
+        )
+    except ValueError:
+        preset = None
+
+    if preset is not None:
+        captions_enabled = (
+            preset.captions_enabled
+        )
+        caption_style = (
+            preset.caption_style
+        )
+        auto_zoom = preset.auto_zoom
+
     return {
         "aspect_ratio": aspect_ratio,
-        "captions_enabled": False,
-        "caption_style": (
-            DEFAULT_CAPTION_STYLE
-        ),
-        "auto_zoom": False,
+        "captions_enabled": captions_enabled,
+        "caption_style": caption_style,
+        "auto_zoom": auto_zoom,
     }
 
 
