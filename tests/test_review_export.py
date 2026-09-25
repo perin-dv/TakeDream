@@ -9,8 +9,11 @@ from core.storage import write_json
 from editor.edit_plan import build_edit_plan
 from editor.review import (
     edited_to_source_ms,
+    remove_range,
+    remove_segment,
     restore_cut,
     source_to_edited_ms,
+    split_segment_at,
 )
 from renderer.export_profiles import get_export_profile
 from renderer.ffmpeg_renderer import build_filter_graph
@@ -74,6 +77,69 @@ class ReviewPlanTests(unittest.TestCase):
             mapped_source,
             remove["end_ms"],
         )
+
+
+    def test_split_and_remove_manual_segment(self):
+        clean_plan = build_edit_plan(
+            5000,
+            "YouTube",
+            "Dinâmico",
+            {"silences": []},
+        )
+
+        split_plan, right_index = split_segment_at(clean_plan, 2000)
+
+        self.assertEqual(len(split_plan["segments"]), 2)
+        self.assertEqual(split_plan["segments"][0]["end_ms"], 2000)
+        self.assertEqual(split_plan["segments"][1]["start_ms"], 2000)
+
+        removed = remove_segment(split_plan, right_index)
+
+        self.assertEqual(removed["segments"][right_index]["action"], "remove")
+        self.assertEqual(
+            removed["segments"][right_index]["reason"],
+            "manual_delete",
+        )
+        self.assertEqual(removed["stats"]["removed_duration_ms"], 3000)
+
+    def test_remove_manual_range_preserves_full_timeline(self):
+        clean_plan = build_edit_plan(
+            6000,
+            "YouTube",
+            "Dinâmico",
+            {"silences": []},
+        )
+
+        removed = remove_range(clean_plan, 1500, 3200)
+
+        self.assertEqual(removed["segments"][0]["start_ms"], 0)
+        self.assertEqual(removed["segments"][-1]["end_ms"], 6000)
+        self.assertEqual(
+            sum(
+                segment["end_ms"] - segment["start_ms"]
+                for segment in removed["segments"]
+                if segment["action"] == "remove"
+            ),
+            1700,
+        )
+        self.assertEqual(removed["stats"]["estimated_duration_ms"], 4300)
+
+    def test_manual_edit_rejects_tiny_or_invalid_ranges(self):
+        clean_plan = build_edit_plan(
+            5000,
+            "YouTube",
+            "Dinâmico",
+            {"silences": []},
+        )
+
+        with self.assertRaises(ValueError):
+            split_segment_at(clean_plan, 20)
+
+        with self.assertRaises(ValueError):
+            remove_range(clean_plan, 1000, 1050)
+
+        with self.assertRaises(ValueError):
+            remove_range(clean_plan, 2000, 1000)
 
     def test_export_profiles(self):
         self.assertIsNone(get_export_profile("original").height)
