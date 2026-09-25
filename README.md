@@ -267,6 +267,15 @@ O redesign cobre:
 A tela inicial antiga com apenas `Novo Projeto` e `Abrir Projeto` não é mais
 a experiência principal.
 
+### Navegação em janela única
+
+O fluxo principal usa uma única janela nativa do TakeDream. Home, Novo Projeto,
+workspace, Revisão, Projetos, Exportações e Configurações são páginas internas
+trocadas no mesmo shell. O aplicativo não abre uma nova janela para cada etapa.
+
+Somente diálogos pontuais, como seletor de arquivo, confirmação, aviso ou erro,
+podem aparecer sobre a janela principal.
+
 ### Home
 
 O dashboard mostra:
