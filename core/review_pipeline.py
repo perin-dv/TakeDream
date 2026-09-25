@@ -68,6 +68,8 @@ class ReviewRenderPipeline:
             destination,
             edit_plan,
             cancel=cancel,
+            progress=progress,
+            stage=stage,
         )
 
         check_cancelled(cancel)
@@ -92,4 +94,5 @@ class ReviewRenderPipeline:
         return {
             "edit_plan": edit_plan,
             "output_path": relative_output,
+            "render_encoder": self.renderer.last_encoder.label,
         }
