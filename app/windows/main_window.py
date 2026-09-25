@@ -28,6 +28,7 @@ from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.windows.new_project_dialog import NewProjectDialog
 from app.windows.project_window import ProjectWindow
+from app.windows.review_window import ReviewWindow
 from core.project_manager import ProjectManager
 
 
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
 
         self.project_manager = ProjectManager()
         self.project_windows = []
+        self.review_windows = []
 
         self.setWindowTitle("TakeDream")
         self.resize(1440, 900)
@@ -593,7 +595,24 @@ class MainWindow(QMainWindow):
                 if project.get("output_path")
             ]
             if projects:
-                self._show_project_window(projects[0]["project_dir"])
+                try:
+                    window = ReviewWindow(
+                        projects[0]["project_dir"],
+                        self,
+                    )
+                except ValueError as error:
+                    QMessageBox.warning(
+                        self,
+                        "Não foi possível abrir a revisão",
+                        str(error),
+                    )
+                    return
+
+                self.review_windows.append(window)
+                window.destroyed.connect(
+                    lambda: self._remove_review_window(window)
+                )
+                window.show()
             else:
                 QMessageBox.information(
                     self,
@@ -688,4 +707,9 @@ class MainWindow(QMainWindow):
     def _remove_project_window(self, window):
         if window in self.project_windows:
             self.project_windows.remove(window)
+        self._build_all_pages()
+
+    def _remove_review_window(self, window):
+        if window in self.review_windows:
+            self.review_windows.remove(window)
         self._build_all_pages()
