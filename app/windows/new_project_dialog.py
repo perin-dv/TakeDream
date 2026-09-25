@@ -89,7 +89,8 @@ class NewProjectDialog(QDialog):
             else "Horizontal"
         )
         self.profile_description.setText(
-            f"{definition.description}\nFormato base: {orientation}."
+            f"{definition.description}\n"
+            f"Formato base: {orientation} • {definition.aspect_ratio}."
         )
 
     def select_video(self):
