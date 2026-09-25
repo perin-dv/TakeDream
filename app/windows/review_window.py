@@ -779,11 +779,24 @@ class ReviewWindow(QMainWindow):
             "360p": "baixa",
         }
 
+        preferred_quality = self.project_data.get(
+            "preferred_export_profile",
+            "original",
+        )
+
+        preferred_index = self.export_combo.findData(
+            preferred_quality
+        )
+        if preferred_index >= 0:
+            self.export_combo.setCurrentIndex(
+                preferred_index
+            )
+
         for index, profile in enumerate(EXPORT_PROFILES):
             button = quality_button(
                 profile.label,
                 quality_subtitles.get(profile.key, ""),
-                checked=(index == 0),
+                checked=(profile.key == preferred_quality),
             )
             self.quality_group.addButton(button)
             self.quality_buttons[profile.key] = button
