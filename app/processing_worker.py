@@ -5,7 +5,7 @@ from PySide6.QtCore import QLockFile, QThread, Signal
 
 from core.batch_visual_analysis import BatchVisualAnalysisPipeline
 from core.edit_pipeline import AutoEditPipeline, load_edit_state
-from core.processing import ProcessingError
+from core.processing import ProcessingCancelled, ProcessingError
 from core.results import load_results
 from core.transcription_pipeline import TranscriptionPipeline
 from core.visual_analysis_pipeline import VisualAnalysisPipeline
@@ -58,49 +58,56 @@ class ProcessingWorker(QThread):
                     metadata,
                 )
 
-                library = manager.load_media_library(self.project_dir)
-                media_count = (
-                    int(library.get("media_count", 0))
-                    if isinstance(library, dict)
-                    else 1
-                )
+                result = {"metadata": metadata}
 
-                if media_count > 1:
-                    self.stage.emit(
-                        f"Analisando biblioteca com {media_count} vídeos..."
+                try:
+                    library = manager.load_media_library(self.project_dir)
+                    media_count = (
+                        int(library.get("media_count", 0))
+                        if isinstance(library, dict)
+                        else 1
                     )
-                    batch_summary = BatchVisualAnalysisPipeline(
-                        manager=manager,
-                        tools=transcription_pipeline.tools,
-                    ).run(
-                        self.project_dir,
-                        cancel=self.cancel,
-                        stage=self.stage.emit,
-                        progress=self.progress.emit,
+
+                    if media_count > 1:
+                        self.stage.emit(
+                            f"Analisando biblioteca com {media_count} vídeos..."
+                        )
+                        result["batch_visual_analysis"] = (
+                            BatchVisualAnalysisPipeline(
+                                manager=manager,
+                                tools=transcription_pipeline.tools,
+                            ).run(
+                                self.project_dir,
+                                cancel=self.cancel,
+                                stage=self.stage.emit,
+                                progress=self.progress.emit,
+                            )
+                        )
+                    else:
+                        result["visual_analysis"] = (
+                            VisualAnalysisPipeline(
+                                manager=manager,
+                                tools=transcription_pipeline.tools,
+                            ).run(
+                                self.project_dir,
+                                metadata=metadata,
+                                cancel=self.cancel,
+                                stage=self.stage.emit,
+                                progress=self.progress.emit,
+                            )
+                        )
+                except ProcessingCancelled:
+                    raise
+                except Exception as visual_error:
+                    # Metadados via FFprobe são uma etapa válida por si só. Uma
+                    # falha na análise visual não deve apagar esse resultado nem
+                    # fazer a UI parecer que o vídeo nunca foi analisado.
+                    result["visual_analysis_error"] = (
+                        str(visual_error)
+                        or "Não foi possível concluir a análise visual."
                     )
-                    self.completed.emit(
-                        {
-                            "metadata": metadata,
-                            "batch_visual_analysis": batch_summary,
-                        }
-                    )
-                else:
-                    visual_analysis = VisualAnalysisPipeline(
-                        manager=manager,
-                        tools=transcription_pipeline.tools,
-                    ).run(
-                        self.project_dir,
-                        metadata=metadata,
-                        cancel=self.cancel,
-                        stage=self.stage.emit,
-                        progress=self.progress.emit,
-                    )
-                    self.completed.emit(
-                        {
-                            "metadata": metadata,
-                            "visual_analysis": visual_analysis,
-                        }
-                    )
+
+                self.completed.emit(result)
 
             elif self.mode == "edit":
                 pipeline = AutoEditPipeline()
