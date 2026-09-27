@@ -96,8 +96,13 @@ class ReviewRenderPipeline:
         validate_edit_plan(edit_plan)
         check_cancelled(cancel)
 
+        settings_source = (
+            project.get("review_settings")
+            if render_settings is None
+            else render_settings
+        )
         settings = normalize_render_settings(
-            render_settings,
+            settings_source,
             project,
         )
 
