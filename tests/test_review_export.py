@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.export_pipeline import ExportPipeline
+from core.processing import ProcessingError
 from core.project_manager import ProjectManager
 from core.review_pipeline import ReviewRenderPipeline
 from core.storage import write_json
@@ -106,7 +107,13 @@ class FakeRenderer:
 
 
 class PipelineTests(unittest.TestCase):
-    def _project(self, root):
+    def _project(
+        self,
+        root,
+        *,
+        captions_enabled=False,
+        auto_zoom=False,
+    ):
         source = root / "source.mp4"
         source.write_bytes(b"source")
 
@@ -116,6 +123,8 @@ class PipelineTests(unittest.TestCase):
             source,
             "YouTube",
             "Dinâmico",
+            captions_enabled=captions_enabled,
+            auto_zoom=auto_zoom,
         )
 
         plan = build_edit_plan(
@@ -153,6 +162,21 @@ class PipelineTests(unittest.TestCase):
                 result["output_path"],
             )
 
+    def test_review_requires_transcript_when_captions_are_enabled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project, plan = self._project(
+                Path(temporary),
+                captions_enabled=True,
+            )
+
+            with self.assertRaisesRegex(
+                ProcessingError,
+                "transcrição",
+            ):
+                ReviewRenderPipeline(
+                    renderer=FakeRenderer()
+                ).run(project, plan)
+
     def test_export_pipeline_uses_selected_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
             project, _ = self._project(Path(temporary))
@@ -172,6 +196,21 @@ class PipelineTests(unittest.TestCase):
                 renderer.calls[0]["options"]["audio_bitrate"],
                 "160k",
             )
+
+    def test_export_requires_transcript_when_captions_are_enabled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project, _ = self._project(
+                Path(temporary),
+                captions_enabled=True,
+            )
+
+            with self.assertRaisesRegex(
+                ProcessingError,
+                "transcrição",
+            ):
+                ExportPipeline(
+                    renderer=FakeRenderer()
+                ).run(project, "720p")
 
     def test_original_export_reuses_existing_preview(self):
         with tempfile.TemporaryDirectory() as temporary:
