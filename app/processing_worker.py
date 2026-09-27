@@ -1,7 +1,9 @@
+from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import QLockFile, QThread, Signal
 
+from core.batch_visual_analysis import BatchVisualAnalysisPipeline
 from core.edit_pipeline import AutoEditPipeline, load_edit_state
 from core.processing import ProcessingError
 from core.results import load_results
@@ -39,37 +41,66 @@ class ProcessingWorker(QThread):
                 self.completed.emit(results)
 
             elif self.mode == "analyze":
-                self.stage.emit("Lendo metadados do vídeo...")
+                manager = transcription_pipeline.manager
+                self.stage.emit("Lendo metadados do vídeo principal...")
                 self.progress.emit(2)
-                _, project = transcription_pipeline.manager.load_project(
-                    self.project_dir
-                )
-                source = self.project_dir / project["source"]["original_path"]
+                _, project = manager.load_project(self.project_dir)
+                source = Path(project["source"]["original_path"])
+                if not source.is_absolute():
+                    source = self.project_dir / source
+
                 metadata = transcription_pipeline.tools.probe(
                     source,
                     cancel=self.cancel,
                 )
-                transcription_pipeline.manager.save_media_metadata(
+                manager.save_media_metadata(
                     self.project_dir,
                     metadata,
                 )
 
-                visual_analysis = VisualAnalysisPipeline(
-                    manager=transcription_pipeline.manager,
-                    tools=transcription_pipeline.tools,
-                ).run(
-                    self.project_dir,
-                    metadata=metadata,
-                    cancel=self.cancel,
-                    stage=self.stage.emit,
-                    progress=self.progress.emit,
+                library = manager.load_media_library(self.project_dir)
+                media_count = (
+                    int(library.get("media_count", 0))
+                    if isinstance(library, dict)
+                    else 1
                 )
-                self.completed.emit(
-                    {
-                        "metadata": metadata,
-                        "visual_analysis": visual_analysis,
-                    }
-                )
+
+                if media_count > 1:
+                    self.stage.emit(
+                        f"Analisando biblioteca com {media_count} vídeos..."
+                    )
+                    batch_summary = BatchVisualAnalysisPipeline(
+                        manager=manager,
+                        tools=transcription_pipeline.tools,
+                    ).run(
+                        self.project_dir,
+                        cancel=self.cancel,
+                        stage=self.stage.emit,
+                        progress=self.progress.emit,
+                    )
+                    self.completed.emit(
+                        {
+                            "metadata": metadata,
+                            "batch_visual_analysis": batch_summary,
+                        }
+                    )
+                else:
+                    visual_analysis = VisualAnalysisPipeline(
+                        manager=manager,
+                        tools=transcription_pipeline.tools,
+                    ).run(
+                        self.project_dir,
+                        metadata=metadata,
+                        cancel=self.cancel,
+                        stage=self.stage.emit,
+                        progress=self.progress.emit,
+                    )
+                    self.completed.emit(
+                        {
+                            "metadata": metadata,
+                            "visual_analysis": visual_analysis,
+                        }
+                    )
 
             elif self.mode == "edit":
                 pipeline = AutoEditPipeline()
