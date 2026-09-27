@@ -80,7 +80,8 @@ class ProjectManager:
         if not media_files:
             raise ValueError("Nenhum vídeo compatível foi encontrado nas mídias selecionadas.")
 
-        source_path = media_files[0]
+        primary_candidates = discover_media([source_video]) if source_video else []
+        source_path = primary_candidates[0] if primary_candidates else media_files[0]
 
         profile_definition = get_profile_definition(profile)
         get_edit_rules(profile, style)
