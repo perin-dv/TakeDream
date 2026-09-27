@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -25,6 +24,7 @@ from app.ui.components import (
     section_title,
 )
 from app.ui.icons import app_icon, icon_pixmap
+from app.ui.library import ProjectCard, ExportCard, ProjectGrid, library_scroll
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
@@ -377,82 +377,67 @@ class MainWindow(QMainWindow):
         browse_button.clicked.connect(self.open_project)
         header.addWidget(browse_button)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-
-        body = QWidget()
-        grid = QGridLayout(body)
-        grid.setContentsMargins(2, 2, 12, 12)
-        grid.setSpacing(12)
-
         projects = self.project_manager.list_projects()
-        if not projects:
+        if projects:
+            cards = [ProjectCard(
+                project,
+                lambda path=project["project_dir"]: self._show_project_window(path),
+                lambda path=project["project_dir"]: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))),
+            ) for project in projects]
+            layout.addWidget(library_scroll(ProjectGrid(cards)), 1)
+        else:
             empty = card()
-            empty_layout = QVBoxLayout(empty)
-            empty_layout.addWidget(
-                section_title("Nenhum projeto encontrado")
-            )
-            empty_layout.addWidget(
-                muted_label(
-                    "Seus projetos aparecerão aqui em cards, "
-                    "com formato, estilo e status.",
-                    True,
-                )
-            )
-            create = QPushButton("Criar primeiro projeto")
+            empty.setMaximumWidth(620)
+            box = QVBoxLayout(empty)
+            box.setContentsMargins(24, 24, 24, 24)
+            box.setSpacing(14)
+            box.addWidget(section_title("Sua próxima história começa aqui", "projects"))
+            box.addWidget(muted_label("Crie um projeto ou abra um project.json existente. Seus vídeos e o progresso da edição ficam reunidos aqui.", True))
+            actions = QHBoxLayout()
+            create = QPushButton("Novo Projeto")
             create.setProperty("primary", True)
             create.clicked.connect(self.create_project)
-            empty_layout.addWidget(create)
-            grid.addWidget(empty, 0, 0)
-        else:
-            for index, project in enumerate(projects):
-                grid.addWidget(
-                    self._project_card(project, large=True),
-                    index // 3,
-                    index % 3,
-                )
-
-        scroll.setWidget(body)
-        layout.addWidget(scroll, 1)
+            browse = QPushButton("Abrir project.json")
+            browse.clicked.connect(self.open_project)
+            actions.addWidget(create)
+            actions.addWidget(browse)
+            box.addLayout(actions)
+            layout.addWidget(empty)
+            layout.addStretch(1)
 
     def _build_exports_page(self):
         layout, _ = self._page_shell(
-            self.exports_page,
-            "Exportações",
-            "Todos os vídeos finais gerados pelo TakeDream.",
+            self.exports_page, "Exportações",
+            "Seus vídeos finalizados, prontos para compartilhar.",
         )
-
         exports = self.project_manager.list_exports()
-
         if not exports:
             empty = card()
+            empty.setMaximumWidth(620)
             box = QVBoxLayout(empty)
-            box.addWidget(section_title("Nenhum vídeo exportado ainda"))
-            box.addWidget(
-                muted_label(
-                    "Quando você exportar um projeto, "
-                    "o arquivo aparecerá aqui.",
-                    True,
-                )
-            )
+            box.setContentsMargins(24, 24, 24, 24)
+            box.setSpacing(14)
+            box.addWidget(section_title("Suas histórias finalizadas ficam aqui", "export"))
+            box.addWidget(muted_label("Abra um projeto, revise sua edição e exporte o vídeo. Você poderá acessar o arquivo e sua pasta por esta página.", True))
+            browse = QPushButton("Ver projetos")
+            browse.setProperty("primary", True)
+            browse.clicked.connect(lambda: self._navigate("projects"))
+            box.addWidget(browse)
             layout.addWidget(empty)
             layout.addStretch(1)
             return
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-
         body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 8, 8)
-        body_layout.setSpacing(8)
-
+        rows = QVBoxLayout(body)
+        rows.setContentsMargins(0, 0, 8, 12)
+        rows.setSpacing(12)
         for item in exports:
-            body_layout.addWidget(self._export_row(item, large=True))
-
-        body_layout.addStretch(1)
-        scroll.setWidget(body)
-        layout.addWidget(scroll, 1)
+            rows.addWidget(ExportCard(
+                item,
+                lambda path=item["path"]: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))),
+                lambda path=item["path"].parent: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))),
+            ))
+        rows.addStretch(1)
+        layout.addWidget(library_scroll(body), 1)
 
     def _build_settings_page(self):
         layout, _ = self._page_shell(

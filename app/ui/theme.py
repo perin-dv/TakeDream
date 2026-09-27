@@ -19,6 +19,18 @@ COLORS = {
 
 
 REVIEW_STYLESHEET = r"""
+QFrame#LibraryCard {
+    background: #151D38; border: 1px solid #313D6A; border-radius: 14px;
+}
+QFrame#LibraryCard:hover { border-color: #6D52AA; }
+QLabel#LibraryTitle { color: #F8F8FF; font-size: 15px; font-weight: 700; background: transparent; border: none; }
+QLabel#LibraryMeta { color: #AAB2D8; font-size: 12px; background: transparent; border: none; }
+QLabel#LibraryChip {
+    color: #DDD3FA; background: #2A254B; border: 1px solid #423860;
+    border-radius: 6px; padding: 3px 7px; font-size: 11px;
+}
+QLabel#LibraryChip[success="true"] { color: #8BE4C4; background: #163C38; border-color: #286354; }
+
 QMainWindow, QDialog, QWidget#Root, QWidget#AppPage {
     background: #0B1020;
     color: #F8F8FF;
@@ -366,6 +378,21 @@ QScrollArea#AppPageScroll,
 QScrollArea#AppPageScroll QWidget#AppPageViewport {
     background: #0B1020;
     border: none;
+}
+
+QScrollArea#AppPageScroll QScrollBar:vertical {
+    background: #10162A; width: 10px; margin: 0;
+}
+QScrollArea#AppPageScroll QScrollBar::handle:vertical {
+    background: #4B4774; min-height: 28px; border-radius: 5px;
+}
+QScrollArea#AppPageScroll QScrollBar::add-page:vertical,
+QScrollArea#AppPageScroll QScrollBar::sub-page:vertical {
+    background: #10162A;
+}
+QScrollArea#AppPageScroll QScrollBar::add-line:vertical,
+QScrollArea#AppPageScroll QScrollBar::sub-line:vertical {
+    height: 0; background: none; border: none;
 }
 
 QScrollArea#TimelineScroll,
