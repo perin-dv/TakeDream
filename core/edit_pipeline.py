@@ -10,11 +10,10 @@ from core.render_effects import (
     prepare_caption_file,
     zoom_events_for_settings,
 )
-from core.render_settings import (
-    normalize_render_settings,
-)
+from core.render_settings import normalize_render_settings
 from core.results import AUDIO_PATH, load_results
 from core.storage import read_json, write_json
+from core.wedding_assembly import WeddingAssemblyPipeline
 from editor.edit_plan import build_edit_plan, validate_edit_plan
 from media.audio_extractor import wav_duration_ms
 from media.ffmpeg_tools import FFmpegTools
@@ -61,9 +60,7 @@ def load_edit_state(project_dir):
         try:
             state["edit_plan"] = validate_edit_plan(read_json(plan_file))
         except ValueError as error:
-            state["edit_errors"].append(
-                f"{EDIT_PLAN_PATH}: {error}"
-            )
+            state["edit_errors"].append(f"{EDIT_PLAN_PATH}: {error}")
 
     try:
         manager = ProjectManager()
@@ -96,6 +93,25 @@ class AutoEditPipeline:
         progress=lambda value: None,
     ):
         root, project = self.manager.load_project(project_dir)
+
+        # Casamento com Media Bin usa uma timeline multi-source. Não cai no
+        # pipeline legado de uma única mídia, pois isso fazia 8+ arquivos serem
+        # analisados e depois descartados, renderizando apenas o primeiro vídeo.
+        if (
+            project.get("profile") == "Casamento"
+            and int(project.get("media_count", 1) or 1) > 1
+        ):
+            stage("Preparando montagem multi-vídeo do casamento...")
+            progress(1)
+            return WeddingAssemblyPipeline(
+                manager=self.manager,
+                tools=self.tools,
+            ).run(
+                root,
+                cancel=cancel,
+                stage=stage,
+                progress=progress,
+            )
 
         stage("Validando transcrição e silêncios...")
         progress(-1)
@@ -146,9 +162,7 @@ class AutoEditPipeline:
 
             metadata = self.manager.load_media_metadata(root)
             if metadata:
-                source_seconds = metadata.get("container", {}).get(
-                    "duration_seconds"
-                )
+                source_seconds = metadata.get("container", {}).get("duration_seconds")
                 if isinstance(source_seconds, (int, float)) and source_seconds > 0:
                     duration_ms = min(
                         audio_duration_ms,
@@ -187,34 +201,21 @@ class AutoEditPipeline:
 
         source = _resolve_source(root, project)
         if not source.exists():
-            raise ProcessingError(
-                "O vídeo original não foi encontrado para renderização."
-            )
+            raise ProcessingError("O vídeo original não foi encontrado para renderização.")
 
         settings = normalize_render_settings(
             project.get("review_settings"),
             project,
         )
 
-        if (
-            settings["auto_zoom"]
-            and load_content_analysis(root) is None
-        ):
-            stage(
-                "Analisando conteúdo para aplicar o estilo..."
-            )
+        if settings["auto_zoom"] and load_content_analysis(root) is None:
+            stage("Analisando conteúdo para aplicar o estilo...")
 
             def content_progress(value):
                 if value < 0:
                     progress(-1)
                 else:
-                    progress(
-                        15
-                        + int(
-                            min(100, value)
-                            * 0.20
-                        )
-                    )
+                    progress(15 + int(min(100, value) * 0.20))
 
             ContentPipeline(
                 manager=self.manager,
@@ -236,10 +237,7 @@ class AutoEditPipeline:
             self.tools,
             source,
         )
-        zoom_events = zoom_events_for_settings(
-            root,
-            settings,
-        )
+        zoom_events = zoom_events_for_settings(root, settings)
 
         destination = _next_output_path(root)
 
@@ -253,33 +251,19 @@ class AutoEditPipeline:
             if value < 0:
                 progress(-1)
             else:
-                progress(
-                    35
-                    + int(
-                        min(100, value)
-                        * 0.65
-                    )
-                )
+                progress(35 + int(min(100, value) * 0.65))
 
         rendered = self.renderer.render(
             source,
             destination,
             plan,
             cancel=cancel,
-            target_aspect_ratio=(
-                settings["aspect_ratio"]
-            ),
+            target_aspect_ratio=settings["aspect_ratio"],
             caption_file=caption_file,
             zoom_events=zoom_events,
-            smart_reframe=(
-                settings["smart_reframe"]
-            ),
-            focus_region=(
-                settings["focus_region"]
-            ),
-            audio_settings=(
-                settings["audio_settings"]
-            ),
+            smart_reframe=settings["smart_reframe"],
+            focus_region=settings["focus_region"],
+            audio_settings=settings["audio_settings"],
             progress=render_progress,
             stage=stage,
         )
@@ -314,11 +298,7 @@ class AutoEditPipeline:
                 "edit_errors": [],
                 "reused_output": False,
                 "render_encoder": getattr(
-                    getattr(
-                        self.renderer,
-                        "last_encoder",
-                        None,
-                    ),
+                    getattr(self.renderer, "last_encoder", None),
                     "label",
                     "Desconhecido",
                 ),
