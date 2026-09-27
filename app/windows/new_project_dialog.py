@@ -35,6 +35,7 @@ from app.ui.icons import app_icon, icon_pixmap
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
 from app.ui.windows import enable_dark_title_bar
+from core.media_library import discover_media
 from profiles import (
     get_edit_rules,
     get_profile_definition,
@@ -67,22 +68,19 @@ class NewProjectDialog(QDialog):
         self.host = host
 
         if embedded:
-            self.setWindowFlags(
-                Qt.WindowType.Widget
-            )
+            self.setWindowFlags(Qt.WindowType.Widget)
 
         self.setWindowTitle("TakeDream — Novo Projeto")
         self.resize(1360, 840)
         self.setMinimumSize(1120, 720)
 
         self.selected_profile = profile_names()[0]
-        self.selected_style = styles_for_profile(
-            self.selected_profile
-        )[0]
+        self.selected_style = styles_for_profile(self.selected_profile)[0]
         self.selected_aspect = get_profile_definition(
             self.selected_profile
         ).aspect_ratio
         self.selected_quality = "original"
+        self.selected_media_paths = []
 
         # Hidden compatibility controls keep the original internal contract
         # available to tests and older code while the visible UI uses cards.
@@ -137,7 +135,7 @@ class NewProjectDialog(QDialog):
         title = QLabel("Novo Projeto")
         title.setObjectName("PageTitle")
         subtitle = QLabel(
-            "Configure seu vídeo e comece a criar com o TakeDream."
+            "Configure suas mídias e comece a criar com o TakeDream."
         )
         subtitle.setObjectName("PageSubtitle")
         header_text.addWidget(title)
@@ -195,12 +193,23 @@ class NewProjectDialog(QDialog):
         name_box.addWidget(self.name_input)
 
         video_box = QVBoxLayout()
-        video_label = QLabel("Arquivo de vídeo")
+        video_label = QLabel("Mídias do projeto")
         video_label.setStyleSheet(
             "font-weight:700; color:#17152A;"
         )
-        self.video_button = QPushButton("Selecionar vídeo")
-        self.video_button.setIcon(app_icon("video", color="#5B4A85", accent="#8B5CF6", size=18))
+
+        media_buttons = QHBoxLayout()
+        media_buttons.setSpacing(6)
+
+        self.video_button = QPushButton("Selecionar vídeos")
+        self.video_button.setIcon(
+            app_icon(
+                "video",
+                color="#5B4A85",
+                accent="#8B5CF6",
+                size=18,
+            )
+        )
         self.video_button.setStyleSheet(
             "QPushButton {background:#FFFFFF; color:#302A51;"
             "border:1px dashed #A7A0C5; border-radius:9px;"
@@ -209,8 +218,38 @@ class NewProjectDialog(QDialog):
         )
         self.video_button.clicked.connect(self.select_video)
         self.select_video_button = self.video_button
+
+        self.folder_button = QPushButton("Adicionar pasta")
+        self.folder_button.setIcon(
+            app_icon(
+                "folder",
+                color="#5B4A85",
+                accent="#8B5CF6",
+                size=18,
+            )
+        )
+        self.folder_button.setStyleSheet(
+            "QPushButton {background:#FFFFFF; color:#302A51;"
+            "border:1px dashed #A7A0C5; border-radius:9px;"
+            "padding:9px 11px; text-align:left;}"
+            "QPushButton:hover {border:2px solid #8B5CF6;}"
+        )
+        self.folder_button.clicked.connect(self.select_media_folder)
+
+        media_buttons.addWidget(self.video_button, 1)
+        media_buttons.addWidget(self.folder_button, 1)
+
+        self.media_count_label = QLabel(
+            "Nenhuma mídia selecionada. Você pode escolher vários vídeos ou uma pasta inteira."
+        )
+        self.media_count_label.setWordWrap(True)
+        self.media_count_label.setStyleSheet(
+            "font-size:11px; color:#6B6880;"
+        )
+
         video_box.addWidget(video_label)
-        video_box.addWidget(self.video_button)
+        video_box.addLayout(media_buttons)
+        video_box.addWidget(self.media_count_label)
 
         info_row.addLayout(name_box, 1)
         info_row.addLayout(video_box, 1)
@@ -256,8 +295,7 @@ class NewProjectDialog(QDialog):
             self.profile_group.addButton(button)
             self.profile_buttons[profile] = button
             button.clicked.connect(
-                lambda checked=False, name=profile:
-                self._set_profile(name)
+                lambda checked=False, name=profile: self._set_profile(name)
             )
             profile_grid.addWidget(
                 button,
@@ -312,8 +350,7 @@ class NewProjectDialog(QDialog):
             self.aspect_group.addButton(button)
             self.aspect_buttons[aspect.key] = button
             button.clicked.connect(
-                lambda checked=False, key=aspect.key:
-                self._set_aspect(key)
+                lambda checked=False, key=aspect.key: self._set_aspect(key)
             )
             aspect_row.addWidget(button)
 
@@ -382,7 +419,7 @@ class NewProjectDialog(QDialog):
             "font-size:15px; font-weight:800; color:#FFFFFF;"
         )
         preview_hint = QLabel(
-            "A prévia real aparece aqui antes de criar o projeto."
+            "A prévia usa a primeira mídia selecionada. O restante entra na biblioteca do projeto."
         )
         preview_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_hint.setWordWrap(True)
@@ -420,8 +457,8 @@ class NewProjectDialog(QDialog):
         preview_layout.addWidget(self.preview_play_button)
         preview_layout.addWidget(
             muted_label(
-                "A prévia usa o vídeo escolhido. "
-                "O resultado final será criado pelo pipeline do TakeDream.",
+                "A primeira mídia fica como fonte principal de preview. "
+                "As demais permanecem no local original e entram no Media Bin.",
                 True,
             )
         )
@@ -463,14 +500,11 @@ class NewProjectDialog(QDialog):
                 badge,
                 subtitle,
             )
-            button.setChecked(
-                profile.key == "original"
-            )
+            button.setChecked(profile.key == "original")
             self.quality_group.addButton(button)
             self.quality_buttons[profile.key] = button
             button.clicked.connect(
-                lambda checked=False, key=profile.key:
-                self._set_quality(key)
+                lambda checked=False, key=profile.key: self._set_quality(key)
             )
             quality_row.addWidget(button)
 
@@ -501,15 +535,8 @@ class NewProjectDialog(QDialog):
         right_layout.addWidget(settings_card, 2)
 
         style_summary_card = card()
-        style_summary_layout = QVBoxLayout(
-            style_summary_card
-        )
-        style_summary_layout.setContentsMargins(
-            12,
-            11,
-            12,
-            11,
-        )
+        style_summary_layout = QVBoxLayout(style_summary_card)
+        style_summary_layout.setContentsMargins(12, 11, 12, 11)
         style_summary_layout.setSpacing(5)
         style_summary_layout.addWidget(
             section_title(
@@ -519,18 +546,20 @@ class NewProjectDialog(QDialog):
         )
 
         self.style_summary_label = QLabel()
-        self.style_summary_label.setProperty(
-            "muted",
-            True,
-        )
+        self.style_summary_label.setProperty("muted", True)
         self.style_summary_label.setWordWrap(True)
-        style_summary_layout.addWidget(
-            self.style_summary_label
-        )
+        style_summary_layout.addWidget(self.style_summary_label)
         right_layout.addWidget(style_summary_card)
 
         self.create_button = QPushButton("Criar Projeto")
-        self.create_button.setIcon(app_icon("sparkles", color="#FFFFFF", accent="#FFFFFF", size=18))
+        self.create_button.setIcon(
+            app_icon(
+                "sparkles",
+                color="#FFFFFF",
+                accent="#FFFFFF",
+                size=18,
+            )
+        )
         self.create_button.setProperty("primary", True)
         self.create_button.setMinimumHeight(48)
         self.create_button.clicked.connect(self.validate_and_accept)
@@ -640,6 +669,17 @@ class NewProjectDialog(QDialog):
         suggested = get_profile_definition(profile).aspect_ratio
         self._set_aspect(suggested)
 
+        if hasattr(self, "media_count_label"):
+            if profile == "Casamento" and not self.selected_media_paths:
+                self.media_count_label.setText(
+                    "Casamento aceita vários vídeos ou uma pasta inteira. "
+                    "Os arquivos não são copiados; o TakeDream cria o Media Bin por referência."
+                )
+            elif not self.selected_media_paths:
+                self.media_count_label.setText(
+                    "Nenhuma mídia selecionada. Você pode escolher vários vídeos ou uma pasta inteira."
+                )
+
     def _rebuild_style_buttons(self, styles):
         while self.style_buttons_layout.count():
             item = self.style_buttons_layout.takeAt(0)
@@ -669,8 +709,7 @@ class NewProjectDialog(QDialog):
             self.style_group.addButton(button)
             self.style_buttons[style] = button
             button.clicked.connect(
-                lambda checked=False, name=style:
-                self._set_style(name)
+                lambda checked=False, name=style: self._set_style(name)
             )
             self.style_buttons_layout.addWidget(
                 button,
@@ -699,16 +738,12 @@ class NewProjectDialog(QDialog):
 
         if hasattr(self, "captions_checkbox"):
             blocked = self.captions_checkbox.blockSignals(True)
-            self.captions_checkbox.setChecked(
-                preset.captions_enabled
-            )
+            self.captions_checkbox.setChecked(preset.captions_enabled)
             self.captions_checkbox.blockSignals(blocked)
 
         if hasattr(self, "auto_zoom_checkbox"):
             blocked = self.auto_zoom_checkbox.blockSignals(True)
-            self.auto_zoom_checkbox.setChecked(
-                preset.auto_zoom
-            )
+            self.auto_zoom_checkbox.setChecked(preset.auto_zoom)
             self.auto_zoom_checkbox.blockSignals(blocked)
 
         if hasattr(self, "style_summary_label"):
@@ -792,22 +827,51 @@ class NewProjectDialog(QDialog):
 
         self.reject()
 
-    def select_video(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Selecionar vídeo",
-            "",
-            "Vídeos (*.mp4 *.mov *.mkv *.avi *.webm *.m4v);;"
-            "Todos os arquivos (*)",
-        )
+    def _add_media_paths(self, inputs):
+        discovered = discover_media(inputs)
+        if not discovered:
+            return 0
 
-        if not file_path:
+        existing = {
+            str(Path(value).expanduser().resolve()).lower()
+            for value in self.selected_media_paths
+        }
+        added = 0
+        for path in discovered:
+            key = str(path.resolve()).lower()
+            if key in existing:
+                continue
+            self.selected_media_paths.append(str(path.resolve()))
+            existing.add(key)
+            added += 1
+
+        self._refresh_media_selection()
+        return added
+
+    def _refresh_media_selection(self):
+        if not self.selected_media_paths:
+            self.video_input.clear()
+            self.video_button.setText("Selecionar vídeos")
+            self.media_count_label.setText(
+                "Nenhuma mídia selecionada. Você pode escolher vários vídeos ou uma pasta inteira."
+            )
             return
 
-        self.video_input.setText(file_path)
+        primary = self.selected_media_paths[0]
+        self.video_input.setText(primary)
+        count = len(self.selected_media_paths)
 
-        name = Path(file_path).name
-        self.video_button.setText(name)
+        if count == 1:
+            self.video_button.setText(Path(primary).name)
+            self.media_count_label.setText(
+                "1 vídeo selecionado • usado também como prévia principal."
+            )
+        else:
+            self.video_button.setText(f"{count} vídeos selecionados")
+            self.media_count_label.setText(
+                f"{count} vídeos no Media Bin • a prévia usa {Path(primary).name}."
+            )
+
         self.video_button.setIcon(
             app_icon(
                 "video",
@@ -816,16 +880,42 @@ class NewProjectDialog(QDialog):
                 size=18,
             )
         )
-        self.player.setSource(
-            QUrl.fromLocalFile(file_path)
-        )
-        self.preview_stack.setCurrentWidget(
-            self.video_widget
-        )
+        self.player.setSource(QUrl.fromLocalFile(primary))
+        self.preview_stack.setCurrentWidget(self.video_widget)
 
         if not self.name_input.text().strip():
-            self.name_input.setText(
-                Path(file_path).stem[:80]
+            self.name_input.setText(Path(primary).stem[:80])
+
+    def select_video(self):
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Selecionar vídeos",
+            "",
+            "Vídeos (*.mp4 *.mov *.mkv *.avi *.webm *.m4v);;"
+            "Todos os arquivos (*)",
+        )
+
+        if not file_paths:
+            return
+
+        self._add_media_paths(file_paths)
+
+    def select_media_folder(self):
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Selecionar pasta com vídeos",
+            "",
+        )
+        if not folder_path:
+            return
+
+        added = self._add_media_paths([folder_path])
+        if added == 0:
+            QMessageBox.information(
+                self,
+                "Nenhum vídeo encontrado",
+                "A pasta selecionada não possui vídeos compatíveis. "
+                "O TakeDream procura também nas subpastas.",
             )
 
     def _toggle_preview(self):
@@ -835,11 +925,25 @@ class NewProjectDialog(QDialog):
         ):
             self.player.pause()
             self.preview_play_button.setText("Reproduzir")
-            self.preview_play_button.setIcon(app_icon("play", color="#FFFFFF", accent="#C084FC", size=17))
+            self.preview_play_button.setIcon(
+                app_icon(
+                    "play",
+                    color="#FFFFFF",
+                    accent="#C084FC",
+                    size=17,
+                )
+            )
         else:
             self.player.play()
             self.preview_play_button.setText("Pausar")
-            self.preview_play_button.setIcon(app_icon("pause", color="#FFFFFF", accent="#C084FC", size=17))
+            self.preview_play_button.setIcon(
+                app_icon(
+                    "pause",
+                    color="#FFFFFF",
+                    accent="#C084FC",
+                    size=17,
+                )
+            )
 
     def validate_and_accept(self):
         if not self.name_input.text().strip():
@@ -850,20 +954,18 @@ class NewProjectDialog(QDialog):
             )
             return
 
-        if not self.video_input.text().strip():
+        if not self.selected_media_paths and not self.video_input.text().strip():
             QMessageBox.warning(
                 self,
                 "Vídeo obrigatório",
-                "Selecione um vídeo para o projeto.",
+                "Selecione pelo menos um vídeo ou uma pasta para o projeto.",
             )
             return
 
         self.player.stop()
 
         if self.embedded and self.host is not None:
-            self.host._create_project_from_data(
-                self.project_data()
-            )
+            self.host._create_project_from_data(self.project_data())
             return
 
         self.accept()
@@ -873,9 +975,15 @@ class NewProjectDialog(QDialog):
         super().reject()
 
     def project_data(self):
+        media = list(self.selected_media_paths)
+        if not media and self.video_input.text().strip():
+            media = [self.video_input.text().strip()]
+
+        primary = media[0] if media else ""
         return {
             "name": self.name_input.text().strip(),
-            "source_video": self.video_input.text().strip(),
+            "source_video": primary,
+            "source_videos": media[1:],
             "profile": self.selected_profile,
             "style": self.selected_style,
             "aspect_ratio": self.selected_aspect,
