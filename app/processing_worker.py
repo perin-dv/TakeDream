@@ -6,6 +6,7 @@ from core.edit_pipeline import AutoEditPipeline, load_edit_state
 from core.processing import ProcessingError
 from core.results import load_results
 from core.transcription_pipeline import TranscriptionPipeline
+from core.visual_analysis_pipeline import VisualAnalysisPipeline
 
 
 class ProcessingWorker(QThread):
@@ -38,6 +39,8 @@ class ProcessingWorker(QThread):
                 self.completed.emit(results)
 
             elif self.mode == "analyze":
+                self.stage.emit("Lendo metadados do vídeo...")
+                self.progress.emit(2)
                 _, project = transcription_pipeline.manager.load_project(
                     self.project_dir
                 )
@@ -50,7 +53,23 @@ class ProcessingWorker(QThread):
                     self.project_dir,
                     metadata,
                 )
-                self.completed.emit({"metadata": metadata})
+
+                visual_analysis = VisualAnalysisPipeline(
+                    manager=transcription_pipeline.manager,
+                    tools=transcription_pipeline.tools,
+                ).run(
+                    self.project_dir,
+                    metadata=metadata,
+                    cancel=self.cancel,
+                    stage=self.stage.emit,
+                    progress=self.progress.emit,
+                )
+                self.completed.emit(
+                    {
+                        "metadata": metadata,
+                        "visual_analysis": visual_analysis,
+                    }
+                )
 
             elif self.mode == "edit":
                 pipeline = AutoEditPipeline()
