@@ -50,5 +50,5 @@ def audio_filter_chain(settings=None):
         f"I={settings['target_lufs']:.1f}:"
         f"LRA={settings['lra']:.1f}:"
         f"TP={settings['true_peak']:.1f},"
-        f"alimiter=limit={settings['limiter']:.3f}"
+        f"alimiter=limit={settings['limiter']:.3f}:level=false"
     )
