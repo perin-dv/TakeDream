@@ -334,6 +334,15 @@ class ExportPipeline:
                 ),
                 caption_file=caption_file,
                 zoom_events=zoom_events,
+                smart_reframe=(
+                    settings["smart_reframe"]
+                ),
+                focus_region=(
+                    settings["focus_region"]
+                ),
+                audio_settings=(
+                    settings["audio_settings"]
+                ),
                 crf=profile.crf,
                 audio_bitrate=(
                     profile.audio_bitrate
