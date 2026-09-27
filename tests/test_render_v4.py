@@ -200,6 +200,35 @@ class RendererV4GraphTests(unittest.TestCase):
         self.assertIn("loudnorm=", graph)
         self.assertIn("alimiter=", graph)
 
+    def test_zoom_slices_normalize_sar_before_concat(self):
+        plan = build_edit_plan(
+            6000,
+            "YouTube",
+            "Dinâmico",
+            {"silences": []},
+        )
+
+        graph = build_filter_graph(
+            plan,
+            source_width=1920,
+            source_height=1080,
+            zoom_events=[
+                {
+                    "start_ms": 1000,
+                    "end_ms": 2000,
+                    "scale": 1.07,
+                }
+            ],
+        )
+
+        # 1.07 produz dimensões arredondadas no zoom e antes causava SAR
+        # diferente entre os slices (1:1 vs 9248:9243), quebrando concat.
+        self.assertGreaterEqual(
+            graph.count("setsar=1"),
+            3,
+        )
+        self.assertIn("concat=n=3", graph)
+
     def test_render_settings_enable_v4_defaults(self):
         settings = normalize_render_settings(
             None,
