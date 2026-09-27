@@ -255,9 +255,17 @@ class ProjectManager:
         metadata_path = analysis_dir / "media_metadata.json"
         write_json(metadata_path, metadata)
 
+        _, project_data = self.load_project(project_dir)
+        current_status = project_data.get("status", "created")
+        next_status = (
+            "media_analyzed"
+            if current_status in {"created", "media_analyzed"}
+            else current_status
+        )
+
         self.update_processing(
             project_dir,
-            "media_analyzed",
+            next_status,
             media_metadata_path="analysis/media_metadata.json",
         )
 
