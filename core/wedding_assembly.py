@@ -64,7 +64,6 @@ def _window(candidate, wanted_ms):
     if wanted <= 0:
         return None
 
-    # Usa o centro da cena quando precisamos encurtar um take longo.
     if wanted < available:
         offset = int((available - wanted) / 2)
         start += offset
@@ -116,9 +115,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
         candidates.append(dict(item))
 
     if not candidates:
-        # Fallback seguro: usa os arquivos inteiros se a análise visual ainda não
-        # conseguiu produzir cenas. Continua sendo multi-source em vez de cair
-        # silenciosamente para o primeiro vídeo.
         for asset in library.get("assets", []):
             seconds = asset.get("duration_seconds")
             if not isinstance(seconds, (int, float)) or seconds <= 0:
@@ -160,7 +156,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
     selected_keys = set()
     accumulated = 0
 
-    # Primeiro garante variedade: pelo menos um take forte de cada mídia.
     for asset in library.get("assets", []):
         asset_id = asset.get("id")
         best = next((item for item in ranked if item.get("asset_id") == asset_id), None)
@@ -175,7 +170,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
         if accumulated >= target_ms or len(selected) >= max_clips:
             break
 
-    # Depois completa o orçamento com os melhores takes restantes.
     if accumulated < target_ms and len(selected) < max_clips:
         for candidate in ranked:
             key = _candidate_key(candidate)
@@ -191,9 +185,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
             if accumulated >= target_ms or len(selected) >= max_clips:
                 break
 
-    # Se temos poucos arquivos/cenas, expande os takes já selecionados antes de
-    # desistir da duração alvo. Isso resolve o caso de 8 clipes de ~26s em que o
-    # rough cut antigo acabava usando apenas um arquivo de 26s.
     if accumulated < target_ms:
         remaining = target_ms - accumulated
         for clip in selected:
@@ -214,8 +205,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
             if remaining <= 0:
                 break
 
-    # Organiza a primeira montagem em uma ordem narrativa simples. O futuro
-    # Reference Analyzer substituirá esta heurística pela linguagem aprendida.
     selected.sort(
         key=lambda clip: (
             _CATEGORY_ORDER.get(clip.get("category_hint"), 8),
@@ -224,7 +213,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
         )
     )
 
-    # Respeita a duração alvo sem cortar um take para menos de 500 ms.
     timeline_ms = 0
     final_clips = []
     for clip in selected:
@@ -311,7 +299,6 @@ class WeddingAssemblyPipeline:
         check_cancelled(cancel)
         stage("Escolhendo os melhores takes para a duração desejada...")
         progress(38)
-        # Recarrega porque a análise em lote atualiza metadados dos assets.
         library = load_media_library(root) or library
         plan = build_wedding_assembly_plan(project, library, batch_summary)
         write_json(root / WEDDING_ASSEMBLY_PLAN_PATH, plan)
@@ -320,9 +307,7 @@ class WeddingAssemblyPipeline:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.unlink(missing_ok=True)
 
-        stage(
-            f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias..."
-        )
+        stage(f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias...")
         rendered = self.renderer.render(
             plan["clips"],
             destination,
@@ -344,9 +329,28 @@ class WeddingAssemblyPipeline:
         write_json(root / "decisions/edit_plan.json", edit_plan)
 
         relative_output = str(rendered.relative_to(root)).replace("\\", "/")
+        original_media_source = project.get("original_media_source")
+        if not isinstance(original_media_source, dict):
+            original_media_source = dict(project.get("source") or {})
+
+        review_settings = dict(project.get("review_settings") or {})
+        # A transcrição antiga pertence apenas ao primeiro arquivo bruto. Para
+        # não queimar legendas erradas sobre a montagem multi-source, elas ficam
+        # aguardando uma nova transcrição da montagem.
+        review_settings["captions_enabled"] = False
+
+        assembly_source = {
+            "original_path": relative_output,
+            "filename": rendered.name,
+            "extension": rendered.suffix.lower(),
+            "generated_from_media_bin": True,
+        }
+
         self.manager.update_processing(
             root,
             "rendered",
+            source=assembly_source,
+            original_media_source=original_media_source,
             edit_plan_path="decisions/edit_plan.json",
             output_path=relative_output,
             review_source_path=relative_output,
@@ -354,6 +358,8 @@ class WeddingAssemblyPipeline:
             wedding_assembly_clip_count=plan["clip_count"],
             wedding_assembly_media_count=plan["media_count"],
             wedding_assembly_duration_ms=duration_ms,
+            assembly_transcription_required=True,
+            review_settings=review_settings,
             edited_duration_ms=duration_ms,
             original_duration_ms=duration_ms,
             render_encoder=getattr(
@@ -383,5 +389,5 @@ class WeddingAssemblyPipeline:
                 "Desconhecido",
             ),
             "wedding_assembly": plan,
-            "review_settings": project.get("review_settings", {}),
+            "review_settings": review_settings,
         }
