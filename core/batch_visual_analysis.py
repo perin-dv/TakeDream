@@ -3,12 +3,13 @@ from pathlib import Path
 
 from core.media_library import (
     MEDIA_LIBRARY_PATH,
+    asset_from_path,
     load_media_library,
     save_media_library,
 )
 from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
-from core.storage import write_json
+from core.storage import read_json, write_json
 from media.ffmpeg_tools import FFmpegTools
 from media.visual_analyzer import VisualAnalyzer
 
@@ -48,6 +49,12 @@ class BatchVisualAnalysisPipeline:
         analyzed = 0
         failed = 0
 
+        primary_path = Path(project["source"]["original_path"])
+        if not primary_path.is_absolute():
+            primary_path = root / primary_path
+        primary_path = primary_path.resolve()
+        primary_metadata = self.manager.load_media_metadata(root)
+
         for index, asset in enumerate(assets):
             check_cancelled(cancel)
             asset_path = Path(asset.get("path", ""))
@@ -57,6 +64,10 @@ class BatchVisualAnalysisPipeline:
                 failed += 1
                 continue
 
+            fresh = asset_from_path(asset_path)
+            if fresh["fingerprint"] != asset.get("fingerprint"):
+                asset.update(fresh)
+
             visual_rel = asset.get("visual_analysis_path")
             visual_path = root / visual_rel if visual_rel else None
             if (
@@ -64,24 +75,24 @@ class BatchVisualAnalysisPipeline:
                 and visual_path is not None
                 and visual_path.exists()
             ):
-                reused += 1
-                cached = None
                 try:
-                    from core.storage import read_json
                     cached = read_json(visual_path)
                 except (OSError, ValueError):
                     cached = None
                 if isinstance(cached, dict):
+                    reused += 1
                     self._collect_candidates(all_candidates, asset, cached)
                     progress(int(((index + 1) / total) * 100))
                     continue
 
-            stage(
-                f"Analisando mídia {index + 1}/{total}: {asset_path.name}"
-            )
+            stage(f"Analisando mídia {index + 1}/{total}: {asset_path.name}")
 
             try:
-                metadata = self.tools.probe(asset_path, cancel=cancel)
+                if asset_path.resolve() == primary_path and primary_metadata is not None:
+                    metadata = primary_metadata
+                else:
+                    metadata = self.tools.probe(asset_path, cancel=cancel)
+
                 duration_seconds = metadata.get("container", {}).get("duration_seconds")
                 if not isinstance(duration_seconds, (int, float)) or duration_seconds <= 0:
                     raise ProcessingError("Duração inválida para análise visual.")
