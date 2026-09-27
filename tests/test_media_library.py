@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.batch_visual_analysis import BatchVisualAnalysisPipeline
-from core.deliverables import normalize_deliverable
+from core.deliverables import build_wedding_story_budget, normalize_deliverable
 from core.media_library import discover_media, load_media_library
 from core.project_manager import ProjectManager
 
@@ -14,12 +14,29 @@ class DeliverableTests(unittest.TestCase):
         self.assertEqual(value["type"], "trailer")
         self.assertEqual(value["target_seconds"], 240)
         self.assertEqual(value["pacing"], "cinematográfico")
+        self.assertEqual(value["selection_strategy"], "narrative_highlight")
         self.assertFalse(value["preserve_long_form"])
 
     def test_wedding_film_preserves_long_form(self):
         value = normalize_deliverable("Casamento", "film", 1500)
         self.assertTrue(value["preserve_long_form"])
         self.assertEqual(value["target_seconds"], 1500)
+        self.assertEqual(value["selection_strategy"], "long_form_story")
+
+    def test_teaser_and_film_use_different_story_budgets(self):
+        teaser = build_wedding_story_budget("teaser", 60)
+        film = build_wedding_story_budget("film", 1200)
+
+        self.assertGreater(
+            teaser["sections"]["festa"] / teaser["target_seconds"],
+            film["sections"]["festa"] / film["target_seconds"],
+        )
+        self.assertGreater(
+            film["sections"]["cerimonia"] / film["target_seconds"],
+            teaser["sections"]["cerimonia"] / teaser["target_seconds"],
+        )
+        self.assertGreater(film["voice_seconds"], teaser["voice_seconds"])
+        self.assertGreater(film["average_shot_seconds"], teaser["average_shot_seconds"])
 
     def test_invalid_teaser_duration_is_rejected(self):
         with self.assertRaises(ValueError):
