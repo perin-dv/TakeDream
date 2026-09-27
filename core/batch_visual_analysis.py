@@ -18,6 +18,17 @@ BATCH_VISUAL_ANALYSIS_PATH = "analysis/batch_visual_analysis.json"
 MEDIA_ASSET_ANALYSIS_DIR = "analysis/media_assets"
 
 
+def _quality_sample_budget(media_count):
+    media_count = max(1, int(media_count))
+    if media_count <= 4:
+        return 10
+    if media_count <= 12:
+        return 5
+    if media_count <= 40:
+        return 3
+    return 2
+
+
 class BatchVisualAnalysisPipeline:
     def __init__(self, manager=None, tools=None, analyzer_factory=None):
         self.manager = manager or ProjectManager()
@@ -44,6 +55,7 @@ class BatchVisualAnalysisPipeline:
 
         assets = library["assets"]
         total = len(assets)
+        sample_budget = _quality_sample_budget(total)
         all_candidates = []
         reused = 0
         analyzed = 0
@@ -106,6 +118,7 @@ class BatchVisualAnalysisPipeline:
                     asset_path,
                     duration_ms,
                     cancel=cancel,
+                    max_quality_samples=sample_budget,
                     stage=lambda text, name=asset_path.name: stage(f"{name} • {text}"),
                     progress=lambda value, base=base, span=span: progress(
                         min(99, base + int((max(0, min(100, value)) / 100) * span))
@@ -130,8 +143,10 @@ class BatchVisualAnalysisPipeline:
                         "duration_seconds": duration_seconds,
                         "resolution": metadata.get("video", {}).get("resolution"),
                         "fps": metadata.get("video", {}).get("fps"),
+                        "audio_present": bool(metadata.get("audio", {}).get("present")),
                         "scene_count": summary.get("scene_count", 0),
                         "quality_average": summary.get("average_quality"),
+                        "quality_samples": summary.get("quality_samples", 0),
                     }
                 )
                 analyzed += 1
@@ -149,14 +164,15 @@ class BatchVisualAnalysisPipeline:
 
         all_candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
         summary = {
-            "schema_version": "0.2",
+            "schema_version": "0.3",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "media_count": total,
             "analyzed_now": analyzed,
             "reused_from_cache": reused,
             "failed": failed,
+            "quality_samples_per_media": sample_budget,
             "total_scenes": sum(int(item.get("scene_count", 0) or 0) for item in assets),
-            "best_take_candidates": all_candidates[:250],
+            "best_take_candidates": all_candidates[:500],
         }
         write_json(root / BATCH_VISUAL_ANALYSIS_PATH, summary)
 
@@ -187,11 +203,13 @@ class BatchVisualAnalysisPipeline:
                     "filename": asset.get("filename"),
                     "path": asset.get("path"),
                     "category_hint": asset.get("category_hint"),
+                    "audio_present": asset.get("audio_present"),
                     "scene_id": scene.get("id"),
                     "start_ms": scene.get("start_ms"),
                     "end_ms": scene.get("end_ms"),
                     "duration_ms": scene.get("duration_ms"),
                     "score": quality.get("score", 0),
                     "quality_label": quality.get("label"),
+                    "quality_sampled": quality.get("sampled"),
                 }
             )
