@@ -116,7 +116,7 @@ class ReviewRenderPipeline:
             )
 
         stage(
-            "Preparando formato, legendas e efeitos..."
+            "Preparando formato, legendas, enquadramento e áudio..."
         )
         progress(5)
 
@@ -150,6 +150,15 @@ class ReviewRenderPipeline:
             ),
             caption_file=caption_file,
             zoom_events=zoom_events,
+            smart_reframe=(
+                settings["smart_reframe"]
+            ),
+            focus_region=(
+                settings["focus_region"]
+            ),
+            audio_settings=(
+                settings["audio_settings"]
+            ),
             progress=progress,
             stage=stage,
         )
