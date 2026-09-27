@@ -127,6 +127,7 @@ class VisualAnalyzer:
 
         stage("Avaliando qualidade dos takes...")
         sample_indices = _sample_indices(len(scenes), max_quality_samples)
+        sampled_indices = set(sample_indices)
         sampled = 0
 
         for position, scene_index in enumerate(sample_indices):
@@ -143,9 +144,23 @@ class VisualAnalyzer:
                 metrics = score_visual_sample(duration_ms=scene["duration_ms"])
                 metrics["degraded"] = True
 
+            metrics["sampled"] = True
             scene["quality"] = metrics
             sampled += 1
             progress(20 + int((position + 1) * 70 / max(1, len(sample_indices))))
+
+        # Em bibliotecas grandes não compensa iniciar um processo FFmpeg para
+        # cada cena. As cenas não amostradas recebem uma nota técnica neutra,
+        # baseada na duração, para continuarem elegíveis no primeiro ranking.
+        # O Best Shot Selector poderá aprofundar só os finalistas depois.
+        for index, scene in enumerate(scenes):
+            if index in sampled_indices:
+                continue
+            metrics = score_visual_sample(duration_ms=scene["duration_ms"])
+            metrics["sampled"] = False
+            metrics["estimated"] = True
+            scene["sample_ms"] = int((scene["start_ms"] + scene["end_ms"]) / 2)
+            scene["quality"] = metrics
 
         ranked = sorted(
             (scene for scene in scenes if isinstance(scene.get("quality"), dict)),
@@ -167,6 +182,7 @@ class VisualAnalyzer:
             "summary": {
                 "scene_count": len(scenes),
                 "quality_samples": sampled,
+                "estimated_quality_scenes": max(0, len(scenes) - sampled),
                 "average_quality": average,
                 "best_scene_ids": [item["id"] for item in ranked[:12]],
             },
