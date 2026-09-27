@@ -8,7 +8,9 @@ from profiles import (
     get_profile_definition,
     get_style_preset,
 )
+from renderer.audio import DEFAULT_AUDIO_SETTINGS
 from renderer.formats import get_aspect_ratio
+from renderer.reframe import FocusRegion
 
 from core.storage import write_json
 
@@ -107,11 +109,18 @@ class ProjectManager:
             "orientation": aspect_definition.orientation,
             "aspect_ratio": aspect_definition.key,
             "status": "created",
+            "focus_region": FocusRegion().to_dict(),
             "review_settings": {
                 "aspect_ratio": aspect_definition.key,
                 "captions_enabled": bool(captions_enabled),
                 "caption_style": str(caption_style),
                 "auto_zoom": bool(auto_zoom),
+                "smart_reframe": True,
+                "focus_region": FocusRegion().to_dict(),
+                "audio_enhance": True,
+                "audio_settings": dict(
+                    DEFAULT_AUDIO_SETTINGS
+                ),
             },
             "preferred_export_profile": str(export_quality),
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -162,7 +171,6 @@ class ProjectManager:
             raise ValueError("O project.json não possui vídeo de origem.")
 
         return path, project_data
-
 
     def list_projects(self):
         projects = []
@@ -240,66 +248,64 @@ class ProjectManager:
         return exports
 
     def save_media_metadata(self, project_dir, metadata):
-        project_dir = Path(project_dir).expanduser().resolve()
+        project_dir = Path(project_dir)
         analysis_dir = project_dir / "analysis"
         analysis_dir.mkdir(parents=True, exist_ok=True)
 
-        metadata_file = analysis_dir / "media_metadata.json"
+        metadata_path = analysis_dir / "media_metadata.json"
+        write_json(metadata_path, metadata)
 
-        write_json(metadata_file, metadata)
-
-        _, project_data = self.load_project(project_dir)
-        if project_data.get("status") in ("created", "media_analyzed"):
-            project_data["status"] = "media_analyzed"
-        project_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        project_data["media_metadata"] = str(
-            metadata_file.relative_to(project_dir)
+        self.update_processing(
+            project_dir,
+            "media_analyzed",
+            media_metadata_path="analysis/media_metadata.json",
         )
 
-        self._write_project_file(project_dir, project_data)
-        return metadata_file
-
     def load_media_metadata(self, project_dir):
-        project_dir = Path(project_dir).expanduser().resolve()
-        metadata_file = project_dir / "analysis" / "media_metadata.json"
+        metadata_path = Path(project_dir) / "analysis" / "media_metadata.json"
 
-        if not metadata_file.exists():
+        if not metadata_path.exists():
             return None
 
         try:
-            with metadata_file.open("r", encoding="utf-8-sig") as file:
+            with metadata_path.open("r", encoding="utf-8-sig") as file:
                 return json.load(file)
         except (OSError, ValueError):
             return None
 
-    def _write_project_file(self, project_dir, project_data):
-        project_file = Path(project_dir) / "project.json"
-
-        write_json(project_file, project_data)
-
     def update_processing(self, project_dir, status, **fields):
-        _, project_data = self.load_project(project_dir)
-        project_data.update(fields)
+        project_dir = Path(project_dir)
+        project_file = project_dir / "project.json"
+
+        with project_file.open("r", encoding="utf-8-sig") as file:
+            project_data = json.load(file)
+
         project_data["status"] = status
         project_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self._write_project_file(project_dir, project_data)
-        return project_data
+        project_data.update(fields)
 
-    def _create_unique_project_directory(self, project_name):
-        folder_name = self._safe_folder_name(project_name) or "projeto"
-        candidate = self.projects_root / folder_name
+        self._write_project_file(project_dir, project_data)
+
+    def _create_unique_project_directory(self, name):
+        slug = self._slugify(name)
+        candidate = self.projects_root / slug
         counter = 2
 
         while candidate.exists():
-            candidate = self.projects_root / f"{folder_name}-{counter}"
+            candidate = self.projects_root / f"{slug}-{counter}"
             counter += 1
 
-        candidate.mkdir(parents=True)
+        candidate.mkdir(parents=True, exist_ok=False)
         return candidate
 
     @staticmethod
-    def _safe_folder_name(value):
-        value = value.strip()
-        value = re.sub(r'[<>:"/\\|?*]', "", value)
-        value = re.sub(r"\s+", "-", value)
-        return value.lower()
+    def _slugify(value):
+        value = value.strip().lower()
+        value = re.sub(r"[^a-z0-9]+", "-", value)
+        value = value.strip("-")
+        return value or "projeto"
+
+    @staticmethod
+    def _write_project_file(project_dir, project_data):
+        project_file = Path(project_dir) / "project.json"
+        write_json(project_file, project_data)
