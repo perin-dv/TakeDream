@@ -33,7 +33,7 @@ def _resolve_source(root, project):
 
 
 def _next_output_path(root):
-    output_dir = Path(root) / "output"
+    output_dir = root / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     candidate = output_dir / DEFAULT_OUTPUT_NAME
@@ -271,6 +271,15 @@ class AutoEditPipeline:
             ),
             caption_file=caption_file,
             zoom_events=zoom_events,
+            smart_reframe=(
+                settings["smart_reframe"]
+            ),
+            focus_region=(
+                settings["focus_region"]
+            ),
+            audio_settings=(
+                settings["audio_settings"]
+            ),
             progress=render_progress,
             stage=stage,
         )
