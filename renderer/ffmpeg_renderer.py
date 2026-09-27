@@ -176,6 +176,13 @@ def build_filter_graph(
                 ]
             )
 
+        # O filtro scale pode alterar o sample aspect ratio (SAR) quando as
+        # dimensões arredondadas do punch zoom não mantêm exatamente a mesma
+        # proporção do frame de origem. O concat exige parâmetros idênticos
+        # entre todos os trechos, então normalizamos cada slice para pixels
+        # quadrados antes de concatenar.
+        video_filters.append("setsar=1")
+
         filters.append(
             "[0:v:0]"
             + ",".join(video_filters)
