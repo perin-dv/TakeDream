@@ -12,6 +12,7 @@ class DeliverablePreset:
     pacing: str
     voice_ratio: float
     average_shot_seconds: float
+    selection_strategy: str
     preserve_long_form: bool = False
 
 
@@ -29,6 +30,7 @@ WEDDING_DELIVERABLES = {
         pacing="rápido",
         voice_ratio=0.14,
         average_shot_seconds=1.5,
+        selection_strategy="best_moments",
     ),
     "trailer": DeliverablePreset(
         key="trailer",
@@ -43,6 +45,7 @@ WEDDING_DELIVERABLES = {
         pacing="cinematográfico",
         voice_ratio=0.28,
         average_shot_seconds=2.6,
+        selection_strategy="narrative_highlight",
     ),
     "film": DeliverablePreset(
         key="film",
@@ -57,6 +60,7 @@ WEDDING_DELIVERABLES = {
         pacing="narrativo",
         voice_ratio=0.42,
         average_shot_seconds=4.8,
+        selection_strategy="long_form_story",
         preserve_long_form=True,
     ),
     "custom": DeliverablePreset(
@@ -69,7 +73,48 @@ WEDDING_DELIVERABLES = {
         pacing="adaptativo",
         voice_ratio=0.25,
         average_shot_seconds=2.8,
+        selection_strategy="adaptive",
     ),
+}
+
+
+WEDDING_STORY_WEIGHTS = {
+    "teaser": {
+        "making_of": 0.12,
+        "cerimonia": 0.18,
+        "votos_falas": 0.10,
+        "casal": 0.25,
+        "recepcao": 0.10,
+        "festa": 0.20,
+        "finale": 0.05,
+    },
+    "trailer": {
+        "making_of": 0.14,
+        "cerimonia": 0.22,
+        "votos_falas": 0.20,
+        "casal": 0.18,
+        "recepcao": 0.10,
+        "festa": 0.12,
+        "finale": 0.04,
+    },
+    "film": {
+        "making_of": 0.14,
+        "cerimonia": 0.30,
+        "votos_falas": 0.22,
+        "casal": 0.10,
+        "recepcao": 0.11,
+        "festa": 0.10,
+        "finale": 0.03,
+    },
+    "custom": {
+        "making_of": 0.14,
+        "cerimonia": 0.24,
+        "votos_falas": 0.18,
+        "casal": 0.17,
+        "recepcao": 0.11,
+        "festa": 0.12,
+        "finale": 0.04,
+    },
 }
 
 
@@ -122,6 +167,35 @@ def normalize_deliverable(profile, key=None, target_seconds=None):
         "pacing": preset.pacing,
         "voice_ratio": preset.voice_ratio,
         "average_shot_seconds": preset.average_shot_seconds,
+        "selection_strategy": preset.selection_strategy,
         "preserve_long_form": preset.preserve_long_form,
         "description": preset.description,
+        "story_budget": build_wedding_story_budget(preset.key, target),
+    }
+
+
+def build_wedding_story_budget(key, target_seconds=None):
+    preset = get_deliverable_preset("Casamento", key)
+    target = int(target_seconds or preset.target_seconds)
+    weights = WEDDING_STORY_WEIGHTS[preset.key]
+
+    sections = {}
+    used = 0
+    names = list(weights)
+    for index, name in enumerate(names):
+        if index == len(names) - 1:
+            seconds = max(0, target - used)
+        else:
+            seconds = int(round(target * weights[name]))
+            used += seconds
+        sections[name] = seconds
+
+    estimated_shots = max(1, int(round(target / preset.average_shot_seconds)))
+    return {
+        "target_seconds": target,
+        "sections": sections,
+        "estimated_shots": estimated_shots,
+        "voice_seconds": int(round(target * preset.voice_ratio)),
+        "selection_strategy": preset.selection_strategy,
+        "average_shot_seconds": preset.average_shot_seconds,
     }
