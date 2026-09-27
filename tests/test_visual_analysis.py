@@ -47,13 +47,39 @@ class SceneDetectionTests(unittest.TestCase):
                 "[Parsed_showinfo_1] n:1 pts:2 pts_time:3.750 pos:0\n"
             )
 
-        analyzer = VisualAnalyzer("ffmpeg", runner=fake_runner)
-        cuts = analyzer.detect_scene_changes(
-            Path("video.mp4"),
-            5000,
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "video.mp4"
+            source.write_bytes(b"fake")
+            analyzer = VisualAnalyzer("ffmpeg", runner=fake_runner)
+            cuts = analyzer.detect_scene_changes(
+                source,
+                5000,
+            )
 
         self.assertEqual(cuts, [1250, 3750])
+
+    def test_quality_metadata_is_parsed_from_ffmpeg_output(self):
+        def fake_runner(command, cancel=None, timeout=None):
+            return (
+                "lavfi.signalstats.YAVG=112.25\n",
+                "[Parsed_blurdetect_3] blur mean: 0.120000\n",
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "video.mp4"
+            source.write_bytes(b"fake")
+            result = VisualAnalyzer(
+                "ffmpeg",
+                runner=fake_runner,
+            ).sample_quality(
+                source,
+                1000,
+                2500,
+            )
+
+        self.assertEqual(result["yavg"], 112.25)
+        self.assertEqual(result["blur"], 0.12)
+        self.assertGreater(result["score"], 70)
 
 
 class QualityScoringTests(unittest.TestCase):
