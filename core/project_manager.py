@@ -12,6 +12,15 @@ from renderer.audio import DEFAULT_AUDIO_SETTINGS
 from renderer.formats import get_aspect_ratio
 from renderer.reframe import FocusRegion
 
+from core.deliverables import normalize_deliverable
+from core.media_library import (
+    MEDIA_LIBRARY_PATH,
+    build_media_library,
+    discover_media,
+    load_media_library,
+    merge_media_library,
+    save_media_library,
+)
 from core.storage import write_json
 
 
@@ -36,54 +45,60 @@ class ProjectManager:
     def create_project(
         self,
         name,
-        source_video,
-        profile,
-        style,
+        source_video=None,
+        profile="YouTube",
+        style="Clean",
         aspect_ratio=None,
         captions_enabled=None,
         auto_zoom=None,
         caption_style=None,
         export_quality="original",
+        source_videos=None,
+        deliverable_type=None,
+        target_duration_seconds=None,
     ):
         name = name.strip()
 
         if not name:
             raise ValueError("Informe um nome para o projeto.")
 
-        source_path = Path(source_video).expanduser().resolve()
+        requested_sources = []
+        if source_video:
+            requested_sources.append(source_video)
+        if source_videos:
+            requested_sources.extend(source_videos)
 
-        if not source_path.exists():
-            raise ValueError("O vídeo selecionado não existe.")
+        if not requested_sources:
+            raise ValueError("Selecione pelo menos um vídeo para o projeto.")
 
-        if not source_path.is_file():
-            raise ValueError("O caminho selecionado não é um arquivo.")
+        for value in requested_sources:
+            path = Path(value).expanduser()
+            if not path.exists():
+                raise ValueError(f"A mídia selecionada não existe: {path}")
 
-        if source_path.suffix.lower() not in self.ALLOWED_VIDEO_EXTENSIONS:
-            raise ValueError(
-                f"Formato de vídeo não suportado: {source_path.suffix}"
-            )
+        media_files = discover_media(requested_sources)
+        if not media_files:
+            raise ValueError("Nenhum vídeo compatível foi encontrado nas mídias selecionadas.")
+
+        source_path = media_files[0]
 
         profile_definition = get_profile_definition(profile)
         get_edit_rules(profile, style)
         style_preset = get_style_preset(style)
 
         if captions_enabled is None:
-            captions_enabled = (
-                style_preset.captions_enabled
-            )
+            captions_enabled = style_preset.captions_enabled
         if auto_zoom is None:
             auto_zoom = style_preset.auto_zoom
         if caption_style is None:
-            caption_style = (
-                style_preset.caption_style
-            )
+            caption_style = style_preset.caption_style
 
-        selected_aspect = (
-            aspect_ratio
-            or profile_definition.aspect_ratio
-        )
-        aspect_definition = get_aspect_ratio(
-            selected_aspect
+        selected_aspect = aspect_ratio or profile_definition.aspect_ratio
+        aspect_definition = get_aspect_ratio(selected_aspect)
+        deliverable = normalize_deliverable(
+            profile,
+            deliverable_type,
+            target_duration_seconds,
         )
 
         project_dir = self._create_unique_project_directory(name)
@@ -101,8 +116,11 @@ class ProjectManager:
         ):
             (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
+        library = build_media_library(media_files)
+        save_media_library(project_dir, library)
+
         project_data = {
-            "schema_version": "0.1",
+            "schema_version": "0.2",
             "name": name,
             "profile": profile,
             "style": style,
@@ -110,6 +128,13 @@ class ProjectManager:
             "aspect_ratio": aspect_definition.key,
             "status": "created",
             "focus_region": FocusRegion().to_dict(),
+            "media_library_path": MEDIA_LIBRARY_PATH,
+            "media_count": library["media_count"],
+            "deliverable": deliverable,
+            "deliverable_type": deliverable.get("type") if deliverable else None,
+            "target_duration_seconds": (
+                deliverable.get("target_seconds") if deliverable else None
+            ),
             "review_settings": {
                 "aspect_ratio": aspect_definition.key,
                 "captions_enabled": bool(captions_enabled),
@@ -118,9 +143,7 @@ class ProjectManager:
                 "smart_reframe": True,
                 "focus_region": FocusRegion().to_dict(),
                 "audio_enhance": True,
-                "audio_settings": dict(
-                    DEFAULT_AUDIO_SETTINGS
-                ),
+                "audio_settings": dict(DEFAULT_AUDIO_SETTINGS),
             },
             "preferred_export_profile": str(export_quality),
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -165,9 +188,11 @@ class ProjectManager:
             raise ValueError("O project.json não possui nome de projeto.")
 
         source = project_data.get("source", {})
-        if (not isinstance(source, dict)
-                or not isinstance(source.get("original_path"), str)
-                or not source["original_path"].strip()):
+        if (
+            not isinstance(source, dict)
+            or not isinstance(source.get("original_path"), str)
+            or not source["original_path"].strip()
+        ):
             raise ValueError("O project.json não possui vídeo de origem.")
 
         return path, project_data
@@ -194,10 +219,10 @@ class ProjectManager:
                     "status": data.get("status", "created"),
                     "updated_at": data.get("updated_at", ""),
                     "created_at": data.get("created_at", ""),
-                    "source_filename": data.get(
-                        "source",
-                        {},
-                    ).get("filename", "—"),
+                    "source_filename": data.get("source", {}).get("filename", "—"),
+                    "media_count": int(data.get("media_count", 1) or 1),
+                    "deliverable_type": data.get("deliverable_type"),
+                    "target_duration_seconds": data.get("target_duration_seconds"),
                     "output_path": data.get("output_path"),
                 }
             )
@@ -246,6 +271,21 @@ class ProjectManager:
             reverse=True,
         )
         return exports
+
+    def load_media_library(self, project_dir):
+        return load_media_library(project_dir)
+
+    def add_media_sources(self, project_dir, sources):
+        root, project_data = self.load_project(project_dir)
+        library = merge_media_library(root, sources)
+        current_status = project_data.get("status", "created")
+        self.update_processing(
+            root,
+            current_status,
+            media_library_path=MEDIA_LIBRARY_PATH,
+            media_count=library.get("media_count", 0),
+        )
+        return library
 
     def save_media_metadata(self, project_dir, metadata):
         project_dir = Path(project_dir)
