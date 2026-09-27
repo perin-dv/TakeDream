@@ -37,6 +37,9 @@ def normalize_audio_settings(value):
 
 
 def audio_filter_chain(settings=None):
+    if settings is None:
+        return None
+
     settings = normalize_audio_settings(settings)
 
     if not settings["enabled"]:
