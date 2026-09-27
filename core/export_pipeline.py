@@ -9,12 +9,12 @@ from core.processing import (
     check_cancelled,
 )
 from core.project_manager import ProjectManager
-from core.render_settings import (
-    normalize_render_settings,
-)
-from core.review_pipeline import (
+from core.render_effects import (
     prepare_caption_file,
     zoom_events_for_settings,
+)
+from core.render_settings import (
+    normalize_render_settings,
 )
 from media.ffmpeg_tools import FFmpegTools
 from renderer.export_profiles import (
