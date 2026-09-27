@@ -12,6 +12,7 @@ from editor.edit_plan import (
     validate_edit_plan,
 )
 from media.process import run_media_progress
+from renderer.audio import audio_filter_chain
 from renderer.formats import (
     crop_dimensions,
     even,
@@ -22,6 +23,10 @@ from renderer.hardware import (
     cpu_encoder_args,
     hardware_encoder_args,
     select_h264_encoder,
+)
+from renderer.reframe import (
+    smart_crop_box,
+    zoom_crop_origin,
 )
 
 
@@ -41,7 +46,6 @@ def _visual_slices(edit_plan, zoom_events=None):
         start = segment["start_ms"]
         end = segment["end_ms"]
         boundaries = {start, end}
-
         overlapping = []
 
         for event in zoom_events:
@@ -138,6 +142,9 @@ def build_filter_graph(
     output_size=None,
     zoom_events=None,
     caption_file=None,
+    smart_reframe=True,
+    focus_region=None,
+    audio_settings=None,
 ):
     validate_edit_plan(edit_plan)
 
@@ -174,6 +181,24 @@ def build_filter_graph(
                 source_height
                 * segment["zoom"]
             )
+
+            if smart_reframe:
+                zoom_x, zoom_y = zoom_crop_origin(
+                    zoom_width,
+                    zoom_height,
+                    source_width,
+                    source_height,
+                    focus_region=focus_region,
+                )
+                crop_position = (
+                    f"{zoom_x}:{zoom_y}"
+                )
+            else:
+                crop_position = (
+                    f"(iw-{source_width})/2:"
+                    f"(ih-{source_height})/2"
+                )
+
             video_filters.extend(
                 [
                     (
@@ -184,8 +209,7 @@ def build_filter_graph(
                     (
                         f"crop={source_width}:"
                         f"{source_height}:"
-                        f"(iw-{source_width})/2:"
-                        f"(ih-{source_height})/2"
+                        f"{crop_position}"
                     ),
                 ]
             )
@@ -216,14 +240,24 @@ def build_filter_graph(
         and not target_aspect_ratio
     )
     has_captions = caption_file is not None
-
-    if not any(
+    audio_chain = audio_filter_chain(
+        audio_settings
+    )
+    has_audio_treatment = (
+        audio_chain is not None
+    )
+    has_video_treatment = any(
         (
             has_aspect_transform,
             has_output_size,
             has_simple_height_scale,
             has_captions,
         )
+    )
+
+    if (
+        not has_video_treatment
+        and not has_audio_treatment
     ):
         filters.append(
             f"{inputs}concat=n={len(slices)}:"
@@ -231,103 +265,123 @@ def build_filter_graph(
         )
         return ";\n".join(filters)
 
-    filters.append(
-        f"{inputs}concat=n={len(slices)}:"
-        "v=1:a=1[joinedv][outa]"
+    video_label = (
+        "joinedv"
+        if has_video_treatment
+        else "outv"
+    )
+    audio_label = (
+        "joineda"
+        if has_audio_treatment
+        else "outa"
     )
 
-    if (
-        has_simple_height_scale
-        and not has_aspect_transform
-        and not has_output_size
-        and not has_captions
-    ):
-        filters.append(
-            "[joinedv]"
-            f"scale=-2:{int(output_height)}:"
-            "flags=lanczos[outv]"
-        )
-        return ";\n".join(filters)
+    filters.append(
+        f"{inputs}concat=n={len(slices)}:"
+        f"v=1:a=1[{video_label}][{audio_label}]"
+    )
 
-    current = "joinedv"
-    stage_index = 0
-
-    if (
-        target_aspect_ratio
-        and type(source_width) is int
-        and type(source_height) is int
-    ):
-        crop_width, crop_height = crop_dimensions(
-            source_width,
-            source_height,
-            target_aspect_ratio,
-        )
+    if has_video_treatment:
+        current = "joinedv"
+        stage_index = 0
 
         if (
-            crop_width != source_width
-            or crop_height != source_height
+            target_aspect_ratio
+            and type(source_width) is int
+            and type(source_height) is int
         ):
-            next_label = (
-                f"stagev{stage_index}"
+            crop_width, crop_height = crop_dimensions(
+                source_width,
+                source_height,
+                target_aspect_ratio,
             )
+
+            if (
+                crop_width != source_width
+                or crop_height != source_height
+            ):
+                next_label = (
+                    f"stagev{stage_index}"
+                )
+                stage_index += 1
+
+                if smart_reframe:
+                    crop = smart_crop_box(
+                        source_width,
+                        source_height,
+                        target_aspect_ratio,
+                        focus_region=focus_region,
+                    )
+                    crop_x = crop["x"]
+                    crop_y = crop["y"]
+                else:
+                    crop_x = (
+                        f"(iw-{crop_width})/2"
+                    )
+                    crop_y = (
+                        f"(ih-{crop_height})/2"
+                    )
+
+                filters.append(
+                    f"[{current}]"
+                    f"crop={crop_width}:"
+                    f"{crop_height}:"
+                    f"{crop_x}:{crop_y}"
+                    f"[{next_label}]"
+                )
+                current = next_label
+
+        if output_size is not None:
+            target_width, target_height = output_size
+            next_label = f"stagev{stage_index}"
             stage_index += 1
 
             filters.append(
                 f"[{current}]"
-                f"crop={crop_width}:"
-                f"{crop_height}:"
-                f"(iw-{crop_width})/2:"
-                f"(ih-{crop_height})/2"
+                f"scale={int(target_width)}:"
+                f"{int(target_height)}:"
+                "flags=lanczos"
                 f"[{next_label}]"
             )
             current = next_label
 
-    if output_size is not None:
-        target_width, target_height = output_size
-        next_label = f"stagev{stage_index}"
-        stage_index += 1
+        elif (
+            output_height is not None
+            and not target_aspect_ratio
+        ):
+            next_label = f"stagev{stage_index}"
+            stage_index += 1
+
+            filters.append(
+                f"[{current}]"
+                f"scale=-2:{int(output_height)}:"
+                "flags=lanczos"
+                f"[{next_label}]"
+            )
+            current = next_label
+
+        if caption_file is not None:
+            next_label = f"stagev{stage_index}"
+            stage_index += 1
+            path = _filter_path(
+                caption_file
+            )
+
+            filters.append(
+                f"[{current}]"
+                f"ass=filename='{path}'"
+                f"[{next_label}]"
+            )
+            current = next_label
 
         filters.append(
-            f"[{current}]"
-            f"scale={int(target_width)}:"
-            f"{int(target_height)}:"
-            "flags=lanczos"
-            f"[{next_label}]"
+            f"[{current}]null[outv]"
         )
-        current = next_label
 
-    elif (
-        output_height is not None
-        and not target_aspect_ratio
-    ):
-        next_label = f"stagev{stage_index}"
-        stage_index += 1
-
+    if has_audio_treatment:
         filters.append(
-            f"[{current}]"
-            f"scale=-2:{int(output_height)}:"
-            "flags=lanczos"
-            f"[{next_label}]"
+            f"[joineda]{audio_chain}[outa]"
         )
-        current = next_label
-
-    if caption_file is not None:
-        next_label = f"stagev{stage_index}"
-        stage_index += 1
-        path = _filter_path(
-            caption_file
-        )
-
-        filters.append(
-            f"[{current}]"
-            f"ass=filename='{path}'"
-            f"[{next_label}]"
-        )
-        current = next_label
-
-    filters.append(
-        f"[{current}]null[outv]"
-    )
 
     return ";\n".join(filters)
 
@@ -386,6 +440,9 @@ class FFmpegRenderer:
         target_aspect_ratio=None,
         caption_file=None,
         zoom_events=None,
+        smart_reframe=True,
+        focus_region=None,
+        audio_settings=None,
         crf=20,
         audio_bitrate="192k",
         preset="veryfast",
@@ -525,6 +582,9 @@ class FFmpegRenderer:
                     output_size=output_size,
                     zoom_events=zoom_events,
                     caption_file=caption_file,
+                    smart_reframe=smart_reframe,
+                    focus_region=focus_region,
+                    audio_settings=audio_settings,
                 ),
                 encoding="utf-8",
             )
