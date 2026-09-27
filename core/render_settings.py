@@ -1,9 +1,16 @@
 from copy import deepcopy
 
 from profiles import get_style_preset
+from renderer.audio import (
+    DEFAULT_AUDIO_SETTINGS,
+    normalize_audio_settings,
+)
 from renderer.captions import CAPTION_STYLES
 from renderer.formats import (
     get_aspect_ratio,
+)
+from renderer.reframe import (
+    normalize_focus_region,
 )
 
 
@@ -41,11 +48,21 @@ def default_render_settings(project):
         )
         auto_zoom = preset.auto_zoom
 
+    focus = normalize_focus_region(
+        project.get("focus_region")
+    )
+
     return {
         "aspect_ratio": aspect_ratio,
         "captions_enabled": captions_enabled,
         "caption_style": caption_style,
         "auto_zoom": auto_zoom,
+        "smart_reframe": True,
+        "focus_region": focus.to_dict(),
+        "audio_enhance": True,
+        "audio_settings": dict(
+            DEFAULT_AUDIO_SETTINGS
+        ),
     }
 
 
@@ -77,6 +94,12 @@ def normalize_render_settings(
     result["auto_zoom"] = bool(
         result["auto_zoom"]
     )
+    result["smart_reframe"] = bool(
+        result["smart_reframe"]
+    )
+    result["audio_enhance"] = bool(
+        result["audio_enhance"]
+    )
 
     if (
         result["caption_style"]
@@ -85,5 +108,22 @@ def normalize_render_settings(
         result["caption_style"] = (
             DEFAULT_CAPTION_STYLE
         )
+
+    result["focus_region"] = (
+        normalize_focus_region(
+            result.get("focus_region")
+        ).to_dict()
+    )
+
+    audio_settings = normalize_audio_settings(
+        result.get("audio_settings")
+    )
+    audio_settings["enabled"] = (
+        result["audio_enhance"]
+        and audio_settings["enabled"]
+    )
+    result["audio_settings"] = (
+        audio_settings
+    )
 
     return result
