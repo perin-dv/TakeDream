@@ -7,11 +7,67 @@ Este documento registra como requisito de produto o modo **Editar por vídeo de 
 Permitir que o usuário forneça:
 
 1. um vídeo de casamento usado como referência de linguagem de edição;
-2. os vídeos brutos do novo casamento;
+2. uma biblioteca inteira de vídeos brutos do novo casamento;
 3. uma música diferente da referência;
-4. uma duração alvo (ex.: trailer de 3 minutos).
+4. um tipo de entrega e duração alvo.
 
 O TakeDream deve analisar a linguagem da referência e gerar uma primeira timeline editada com a mesma lógica narrativa e de ritmo, sem copiar o conteúdo quadro a quadro.
+
+## Biblioteca de mídia / Media Bin
+
+Projetos de casamento não podem depender de um único arquivo-fonte. O projeto deve aceitar dezenas ou centenas de vídeos vindos de câmeras, drone e pastas diferentes.
+
+A biblioteca usa referências aos arquivos originais; os vídeos grandes não são copiados para dentro do projeto. Isso evita importações lentas e duplicação de dezenas ou centenas de gigabytes.
+
+Cada mídia recebe um fingerprint rápido baseado em caminho, tamanho e data de modificação. Scene Detection e Quality Scoring são armazenados por mídia. Se o arquivo não mudou, a análise é reutilizada em novas entregas.
+
+Exemplo:
+
+```text
+CASAMENTO/
+├─ CAM01/
+├─ CAM02/
+├─ DRONE/
+├─ MAKING_OF/
+├─ CERIMONIA/
+├─ CASAL/
+└─ FESTA/
+```
+
+## Tipos de entrega
+
+O mesmo material bruto pode gerar produtos diferentes sem reanalisar tudo.
+
+### Teaser
+
+- aproximadamente 30–90 segundos;
+- padrão inicial: 60 segundos;
+- seleção concentrada nos momentos de maior impacto;
+- takes mais curtos;
+- menos fala;
+- festa/casal têm peso proporcional maior.
+
+### Trailer / Highlight
+
+- aproximadamente 2m30–5 minutos;
+- padrão inicial: 3m30;
+- narrativa emocional;
+- votos e falas entram como fio condutor;
+- making of, cerimônia, casal e festa formam arco com crescimento e clímax.
+
+### Filme completo
+
+- aproximadamente 15–30 minutos;
+- padrão inicial: 20 minutos;
+- preserva falas, cerimônia e acontecimentos longos importantes;
+- takes médios mais longos;
+- prioridade para continuidade narrativa, não apenas melhores imagens isoladas.
+
+### Personalizado
+
+Permite duração definida pelo usuário, mantendo a estratégia adaptativa.
+
+O TakeDream guarda um **story budget** para cada entrega, definindo quanto tempo aproximado deve ser reservado para making of, cerimônia, votos/falas, casal, recepção, festa e encerramento. Assim, mudar de Teaser para Filme não significa apenas esticar a mesma montagem.
 
 ## O que aprender da referência
 
@@ -71,19 +127,31 @@ O objetivo não é reproduzir cortes nos mesmos timestamps, e sim reproduzir a *
 
 Ao final, o TakeDream deve abrir a revisão com uma timeline já montada, contendo vídeo principal, B-roll, falas, música e decisões automáticas visíveis/editáveis pelo usuário.
 
+Uma única biblioteca analisada poderá alimentar várias entregas do mesmo casamento, por exemplo:
+
+```text
+Teaser 60s
+Trailer 3m30
+Filme 22min
+```
+
+sem repetir Scene Detection e Quality Scoring nos arquivos que não mudaram.
+
 ## Roadmap técnico
 
-1. Scene Detection — V1 iniciado.
-2. Quality Scoring — V1 iniciado.
-3. Tracking de pessoas/rostos.
-4. Detecção de estabilidade/movimento e enquadramento.
-5. Classificador de cenas de casamento.
-6. Analisador de música/batidas/energia.
-7. Reference Video Analyzer.
-8. Wedding Story Builder.
-9. Best Shot Selector para grandes lotes de mídia.
-10. Montagem automática de trailer/teaser/highlight.
-11. Timeline V2 exibindo as decisões do editor automático.
+1. Media Bin / múltiplas mídias — fundação iniciada.
+2. Scene Detection — V1 iniciado.
+3. Quality Scoring — V1 iniciado.
+4. Análise visual em lote + cache por mídia — fundação iniciada.
+5. Tracking de pessoas/rostos.
+6. Detecção de estabilidade/movimento e enquadramento.
+7. Classificador de cenas de casamento.
+8. Analisador de música/batidas/energia.
+9. Reference Video Analyzer.
+10. Wedding Story Builder usando tipo de entrega e story budget.
+11. Best Shot Selector para grandes lotes de mídia.
+12. Montagem automática de teaser/trailer/filme.
+13. Timeline V2 exibindo as decisões do editor automático.
 
 ## Princípio
 
