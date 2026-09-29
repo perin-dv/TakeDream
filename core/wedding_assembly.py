@@ -6,10 +6,13 @@ from core.batch_visual_analysis import (
 )
 from core.deliverables import normalize_deliverable
 from core.media_library import load_media_library
+from core.music_pipeline import MusicAnalysisPipeline
 from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
+from core.reference_pipeline import ReferenceAnalysisPipeline
 from core.storage import read_json, write_json
 from editor.edit_plan import build_edit_plan
+from editor.reference_mapping import map_reference_timing
 from media.ffmpeg_tools import FFmpegTools
 from profiles import get_style_preset
 from renderer.multisource_renderer import MultiSourceRenderer
@@ -17,6 +20,7 @@ from renderer.multisource_renderer import MultiSourceRenderer
 
 WEDDING_ASSEMBLY_PLAN_PATH = "decisions/wedding_assembly_plan.json"
 WEDDING_ASSEMBLY_OUTPUT = "output/wedding_assembly_base.mp4"
+REFERENCE_TIMING_PATH = "decisions/reference_timing.json"
 
 
 _CATEGORY_ORDER = {
@@ -88,7 +92,41 @@ def _window(candidate, wanted_ms):
     }
 
 
-def build_wedding_assembly_plan(project, library, batch_summary):
+def _reference_durations(reference_timing):
+    if not isinstance(reference_timing, dict):
+        return []
+    shots = reference_timing.get("shots")
+    if not isinstance(shots, list):
+        return []
+    values = []
+    for shot in shots:
+        if not isinstance(shot, dict):
+            continue
+        try:
+            duration = int(shot.get("duration_ms", 0))
+        except (TypeError, ValueError):
+            continue
+        if duration >= 500:
+            values.append(duration)
+    return values
+
+
+def _retime_clip(clip, wanted_ms):
+    clip = dict(clip)
+    source_start = int(clip.get("source_start_ms", clip.get("start_ms", 0)) or 0)
+    source_end = int(clip.get("source_end_ms", clip.get("end_ms", source_start)) or source_start)
+    available = max(0, source_end - source_start)
+    if available <= 0:
+        return clip
+    wanted = max(500, min(int(wanted_ms), available))
+    offset = max(0, int((available - wanted) / 2))
+    clip["start_ms"] = source_start + offset
+    clip["end_ms"] = clip["start_ms"] + wanted
+    clip["duration_ms"] = wanted
+    return clip
+
+
+def build_wedding_assembly_plan(project, library, batch_summary, reference_timing=None):
     deliverable = project.get("deliverable")
     if not isinstance(deliverable, dict):
         deliverable = normalize_deliverable(
@@ -101,6 +139,8 @@ def build_wedding_assembly_plan(project, library, batch_summary):
     deliverable_type = deliverable.get("type", "trailer")
     base_clip_ms = _base_clip_ms(deliverable)
     max_clips = _max_clips(deliverable_type)
+    timing_durations = _reference_durations(reference_timing)
+    desired_clip_count = min(max_clips, len(timing_durations)) if timing_durations else None
 
     raw_candidates = batch_summary.get("best_take_candidates", [])
     candidates = []
@@ -142,7 +182,6 @@ def build_wedding_assembly_plan(project, library, batch_summary):
         asset.get("id"): index
         for index, asset in enumerate(library.get("assets", []))
     }
-
     ranked = sorted(
         candidates,
         key=lambda item: (
@@ -156,36 +195,49 @@ def build_wedding_assembly_plan(project, library, batch_summary):
     selected_keys = set()
     accumulated = 0
 
+    def next_wanted():
+        if timing_durations and len(selected) < len(timing_durations):
+            return timing_durations[len(selected)]
+        return base_clip_ms
+
+    def done():
+        if len(selected) >= max_clips:
+            return True
+        if desired_clip_count is not None:
+            return len(selected) >= desired_clip_count
+        return accumulated >= target_ms
+
+    # Garante variedade de câmera/mídia antes de completar pelos melhores scores.
     for asset in library.get("assets", []):
         asset_id = asset.get("id")
         best = next((item for item in ranked if item.get("asset_id") == asset_id), None)
         if best is None:
             continue
-        clip = _window(best, min(base_clip_ms, int(best.get("duration_ms", 0) or 0)))
+        clip = _window(best, min(next_wanted(), int(best.get("duration_ms", 0) or 0)))
         if clip is None:
             continue
         selected.append(clip)
         selected_keys.add(_candidate_key(best))
         accumulated += clip["duration_ms"]
-        if accumulated >= target_ms or len(selected) >= max_clips:
+        if done():
             break
 
-    if accumulated < target_ms and len(selected) < max_clips:
+    if not done():
         for candidate in ranked:
             key = _candidate_key(candidate)
             if key in selected_keys:
                 continue
             duration = int(candidate.get("duration_ms", 0) or 0)
-            clip = _window(candidate, min(base_clip_ms, duration))
+            clip = _window(candidate, min(next_wanted(), duration))
             if clip is None:
                 continue
             selected.append(clip)
             selected_keys.add(key)
             accumulated += clip["duration_ms"]
-            if accumulated >= target_ms or len(selected) >= max_clips:
+            if done():
                 break
 
-    if accumulated < target_ms:
+    if accumulated < target_ms and not timing_durations:
         remaining = target_ms - accumulated
         for clip in selected:
             available_extra = max(0, clip["source_duration_ms"] - clip["duration_ms"])
@@ -212,6 +264,17 @@ def build_wedding_assembly_plan(project, library, batch_summary):
             clip.get("source_start_ms", 0),
         )
     )
+
+    # Reaplica a sequência temporal aprendida da referência depois de organizar
+    # os takes narrativamente. Assim o conteúdo muda, mas o ritmo permanece.
+    if timing_durations:
+        retimed = []
+        for index, clip in enumerate(selected):
+            if index >= len(timing_durations):
+                break
+            retimed.append(_retime_clip(clip, timing_durations[index]))
+        if retimed:
+            selected = retimed
 
     timeline_ms = 0
     final_clips = []
@@ -245,7 +308,7 @@ def build_wedding_assembly_plan(project, library, batch_summary):
                 next_zoom_ms = clip["timeline_start_ms"] + zoom_gap_ms
 
     return {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
         "deliverable": deliverable,
@@ -253,6 +316,16 @@ def build_wedding_assembly_plan(project, library, batch_summary):
         "estimated_duration_ms": timeline_ms,
         "media_count": len({clip.get("asset_id") for clip in final_clips}),
         "clip_count": len(final_clips),
+        "reference_timing_applied": bool(timing_durations),
+        "reference_rhythm": (
+            reference_timing.get("reference_rhythm")
+            if isinstance(reference_timing, dict)
+            else None
+        ),
+        "music_snap_enabled": bool(
+            isinstance(reference_timing, dict)
+            and reference_timing.get("music_snap_enabled")
+        ),
         "clips": final_clips,
     }
 
@@ -293,28 +366,87 @@ class WeddingAssemblyPipeline:
                 root,
                 cancel=cancel,
                 stage=stage,
-                progress=lambda value: progress(int(max(0, min(100, value)) * 0.35)),
+                progress=lambda value: progress(int(max(0, min(100, value)) * 0.28)),
             )
 
         check_cancelled(cancel)
+        reference_style = None
+        music_analysis = None
+        reference_video = project.get("reference_video_path")
+        music_source = project.get("music_source_path")
+
+        if reference_video:
+            stage("Aprendendo o DNA do casamento de referência...")
+            result = ReferenceAnalysisPipeline(
+                manager=self.manager,
+                tools=self.tools,
+            ).run(
+                root,
+                reference_video,
+                cancel=cancel,
+                stage=stage,
+                progress=lambda value: progress(28 + int(max(0, min(100, value)) * 0.08)),
+            )
+            reference_style = result.get("reference_style")
+
+        if music_source:
+            stage("Analisando a nova música e seus pontos fortes...")
+            result = MusicAnalysisPipeline(
+                manager=self.manager,
+                tools=self.tools,
+            ).run(
+                root,
+                music_source,
+                cancel=cancel,
+                stage=stage,
+                progress=lambda value: progress(36 + int(max(0, min(100, value)) * 0.08)),
+            )
+            music_analysis = result.get("music_analysis")
+
+        reference_timing = None
+        if isinstance(reference_style, dict):
+            deliverable = project.get("deliverable")
+            if not isinstance(deliverable, dict):
+                deliverable = normalize_deliverable(
+                    "Casamento",
+                    project.get("deliverable_type"),
+                    project.get("target_duration_seconds"),
+                )
+            target_ms = int(deliverable["target_seconds"]) * 1000
+            reference_timing = map_reference_timing(
+                reference_style,
+                target_ms,
+                music_analysis=music_analysis,
+            )
+            write_json(root / REFERENCE_TIMING_PATH, reference_timing)
+
+        check_cancelled(cancel)
         stage("Escolhendo os melhores takes para a duração desejada...")
-        progress(38)
+        progress(45)
         library = load_media_library(root) or library
-        plan = build_wedding_assembly_plan(project, library, batch_summary)
+        plan = build_wedding_assembly_plan(
+            project,
+            library,
+            batch_summary,
+            reference_timing=reference_timing,
+        )
         write_json(root / WEDDING_ASSEMBLY_PLAN_PATH, plan)
 
         destination = root / WEDDING_ASSEMBLY_OUTPUT
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.unlink(missing_ok=True)
 
-        stage(f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias...")
+        stage(
+            f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias..."
+        )
         rendered = self.renderer.render(
             plan["clips"],
             destination,
             target_aspect_ratio=project.get("aspect_ratio", "16:9"),
             audio_settings=(project.get("review_settings") or {}).get("audio_settings"),
+            music_path=music_source,
             cancel=cancel,
-            progress=lambda value: progress(40 + int(max(0, min(100, value)) * 0.60)),
+            progress=lambda value: progress(48 + int(max(0, min(100, value)) * 0.52)),
             stage=stage,
         )
 
@@ -329,28 +461,9 @@ class WeddingAssemblyPipeline:
         write_json(root / "decisions/edit_plan.json", edit_plan)
 
         relative_output = str(rendered.relative_to(root)).replace("\\", "/")
-        original_media_source = project.get("original_media_source")
-        if not isinstance(original_media_source, dict):
-            original_media_source = dict(project.get("source") or {})
-
-        review_settings = dict(project.get("review_settings") or {})
-        # A transcrição antiga pertence apenas ao primeiro arquivo bruto. Para
-        # não queimar legendas erradas sobre a montagem multi-source, elas ficam
-        # aguardando uma nova transcrição da montagem.
-        review_settings["captions_enabled"] = False
-
-        assembly_source = {
-            "original_path": relative_output,
-            "filename": rendered.name,
-            "extension": rendered.suffix.lower(),
-            "generated_from_media_bin": True,
-        }
-
         self.manager.update_processing(
             root,
             "rendered",
-            source=assembly_source,
-            original_media_source=original_media_source,
             edit_plan_path="decisions/edit_plan.json",
             output_path=relative_output,
             review_source_path=relative_output,
@@ -358,8 +471,9 @@ class WeddingAssemblyPipeline:
             wedding_assembly_clip_count=plan["clip_count"],
             wedding_assembly_media_count=plan["media_count"],
             wedding_assembly_duration_ms=duration_ms,
-            assembly_transcription_required=True,
-            review_settings=review_settings,
+            reference_timing_path=(REFERENCE_TIMING_PATH if reference_timing else None),
+            reference_timing_applied=plan["reference_timing_applied"],
+            music_snap_enabled=plan["music_snap_enabled"],
             edited_duration_ms=duration_ms,
             original_duration_ms=duration_ms,
             render_encoder=getattr(
@@ -389,5 +503,7 @@ class WeddingAssemblyPipeline:
                 "Desconhecido",
             ),
             "wedding_assembly": plan,
-            "review_settings": review_settings,
+            "reference_timing": reference_timing,
+            "music_analysis": music_analysis,
+            "review_settings": project.get("review_settings", {}),
         }
