@@ -46,7 +46,16 @@ class MultiSourceRenderer:
             raise ProcessingError("Não foi possível determinar a resolução da montagem.")
         return width, height
 
-    def _build_graph(self, clips, width, height, audio_presence, audio_settings):
+    def _build_graph(
+        self,
+        clips,
+        width,
+        height,
+        audio_presence,
+        audio_settings,
+        *,
+        music_path=None,
+    ):
         filters = []
         labels = []
 
@@ -90,16 +99,39 @@ class MultiSourceRenderer:
             labels.append(f"[v{index}][a{index}]")
 
         audio_chain = audio_filter_chain(audio_settings)
-        audio_label = "joineda" if audio_chain else "outa"
+        concat_audio_label = "joineda" if (audio_chain or music_path) else "outa"
         filters.append(
             "".join(labels)
-            + f"concat=n={len(clips)}:v=1:a=1[outv][{audio_label}]"
+            + f"concat=n={len(clips)}:v=1:a=1[outv][{concat_audio_label}]"
         )
+
+        base_audio = concat_audio_label
         if audio_chain:
-            filters.append(f"[joineda]{audio_chain}[outa]")
+            treated = "treateda" if music_path else "outa"
+            filters.append(f"[{base_audio}]{audio_chain}[{treated}]")
+            base_audio = treated
+
+        if music_path:
+            total_seconds = sum(int(clip["duration_ms"]) for clip in clips) / 1000.0
+            music_index = len(clips)
+            fade_start = max(0.0, total_seconds - 1.5)
+            filters.append(
+                f"[{base_audio}]volume=0.68[sourcea]"
+            )
+            filters.append(
+                f"[{music_index}:a:0]aresample=48000,"
+                "aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                f"atrim=duration={total_seconds:.6f},asetpts=PTS-STARTPTS,"
+                f"volume=0.30,afade=t=out:st={fade_start:.6f}:d=1.5[musica]"
+            )
+            filters.append(
+                "[sourcea][musica]amix=inputs=2:duration=first:"
+                "dropout_transition=2:normalize=0[outa]"
+            )
+
         return ";\n".join(filters)
 
-    def _command(self, clips, graph_path, output_path, encoder_args):
+    def _command(self, clips, graph_path, output_path, encoder_args, *, music_path=None):
         command = [self.tools.ffmpeg_path, "-hide_banner", "-nostdin", "-v", "error"]
         for clip in clips:
             command.extend(
@@ -112,6 +144,8 @@ class MultiSourceRenderer:
                     str(Path(clip["path"]).resolve()),
                 ]
             )
+        if music_path:
+            command.extend(["-i", str(Path(music_path).expanduser().resolve())])
         command.extend(
             [
                 "-/filter_complex",
@@ -142,6 +176,7 @@ class MultiSourceRenderer:
         *,
         target_aspect_ratio="16:9",
         audio_settings=None,
+        music_path=None,
         cancel=None,
         progress=lambda value: None,
         stage=lambda text: None,
@@ -164,6 +199,12 @@ class MultiSourceRenderer:
                 raise ProcessingError(f"Mídia da montagem não encontrada: {path.name}")
             if int(clip.get("duration_ms", 0) or 0) <= 0:
                 raise ProcessingError("A montagem contém um take com duração inválida.")
+
+        resolved_music = None
+        if music_path:
+            resolved_music = Path(music_path).expanduser().resolve()
+            if not resolved_music.exists() or not resolved_music.is_file():
+                raise ProcessingError("A música escolhida para a montagem não foi encontrada.")
 
         source_width, source_height = self._first_dimensions(clips[0]["path"], cancel)
         width, height = target_dimensions(
@@ -203,7 +244,14 @@ class MultiSourceRenderer:
 
         expected_duration_ms = sum(int(clip["duration_ms"]) for clip in clips)
         graph_path.write_text(
-            self._build_graph(clips, width, height, audio_presence, audio_settings),
+            self._build_graph(
+                clips,
+                width,
+                height,
+                audio_presence,
+                audio_settings,
+                music_path=resolved_music,
+            ),
             encoding="utf-8",
         )
 
@@ -222,7 +270,13 @@ class MultiSourceRenderer:
 
             try:
                 run_media_progress(
-                    self._command(clips, graph_path, temporary_output, args),
+                    self._command(
+                        clips,
+                        graph_path,
+                        temporary_output,
+                        args,
+                        music_path=resolved_music,
+                    ),
                     duration_ms=max(1, expected_duration_ms),
                     progress=progress,
                     cancel=cancel,
@@ -238,7 +292,13 @@ class MultiSourceRenderer:
                 stage(f"{encoder.label} falhou. Continuando pela CPU...")
                 cpu_args = cpu_encoder_args(preset="veryfast", quality=20)
                 run_media_progress(
-                    self._command(clips, graph_path, temporary_output, cpu_args),
+                    self._command(
+                        clips,
+                        graph_path,
+                        temporary_output,
+                        cpu_args,
+                        music_path=resolved_music,
+                    ),
                     duration_ms=max(1, expected_duration_ms),
                     progress=progress,
                     cancel=cancel,
