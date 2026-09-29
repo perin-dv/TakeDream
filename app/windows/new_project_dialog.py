@@ -5,7 +5,6 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -34,6 +33,7 @@ from app.ui.components import (
 from app.ui.icons import app_icon, icon_pixmap
 from app.ui.shell import TakeDreamSidebar
 from app.ui.theme import apply_app_theme
+from app.ui.wedding_setup import WeddingSetupWidget
 from app.ui.windows import enable_dark_title_bar
 from core.media_library import discover_media
 from profiles import (
@@ -63,10 +63,8 @@ PROFILE_ICONS = {
 class NewProjectDialog(QDialog):
     def __init__(self, parent=None, *, embedded=False, host=None):
         super().__init__(parent)
-
         self.embedded = embedded
         self.host = host
-
         if embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
 
@@ -81,21 +79,18 @@ class NewProjectDialog(QDialog):
         ).aspect_ratio
         self.selected_quality = "original"
         self.selected_media_paths = []
+        self.caption_style = CAPTION_STYLES[1]
 
-        # Hidden compatibility controls keep the original internal contract
-        # available to tests and older code while the visible UI uses cards.
+        # Contrato legado mantido para testes e integrações internas.
         self.profile_combo = QComboBox()
         self.profile_combo.addItems(profile_names())
         self.profile_combo.hide()
-
         self.style_combo = QComboBox()
         self.style_combo.hide()
-
         self.aspect_combo = QComboBox()
         for aspect in ASPECT_RATIOS:
             self.aspect_combo.addItem(aspect.label, aspect.key)
         self.aspect_combo.hide()
-
         self.profile_description = QLabel()
         self.profile_description.hide()
 
@@ -115,50 +110,33 @@ class NewProjectDialog(QDialog):
         content_layout.setSpacing(14)
 
         header = QHBoxLayout()
-        plus = QLabel()
-        plus.setFixedSize(48, 48)
-        plus.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        plus.setPixmap(
-            icon_pixmap(
-                "plus",
-                color="#FFFFFF",
-                accent="#C084FC",
-                size=34,
-            )
+        header_icon = QLabel()
+        header_icon.setFixedSize(48, 48)
+        header_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_icon.setPixmap(
+            icon_pixmap("plus", color="#FFFFFF", accent="#C084FC", size=34)
         )
-        plus.setStyleSheet(
-            "background:#6D28D9; border-radius:24px;"
-        )
-
+        header_icon.setStyleSheet("background:#6D28D9; border-radius:24px;")
         header_text = QVBoxLayout()
         header_text.setSpacing(0)
         title = QLabel("Novo Projeto")
         title.setObjectName("PageTitle")
-        subtitle = QLabel(
-            "Configure suas mídias e comece a criar com o TakeDream."
-        )
+        subtitle = QLabel("Configure suas mídias e comece a criar com o TakeDream.")
         subtitle.setObjectName("PageSubtitle")
         header_text.addWidget(title)
         header_text.addWidget(subtitle)
-
-        header.addWidget(plus)
+        header.addWidget(header_icon)
         header.addSpacing(8)
         header.addLayout(header_text)
         header.addStretch(1)
-
-        close_button = QPushButton("Voltar" if embedded else "Fechar")
-        close_button.clicked.connect(self._close_page)
-        self.cancel_button = close_button
-        header.addWidget(close_button)
-
+        self.cancel_button = QPushButton("Voltar" if embedded else "Fechar")
+        self.cancel_button.clicked.connect(self._close_page)
+        header.addWidget(self.cancel_button)
         content_layout.addLayout(header)
 
         columns = QHBoxLayout()
         columns.setSpacing(12)
 
-        # --------------------------------------------------------------
-        # LEFT / FORM
-        # --------------------------------------------------------------
         form_card = QFrame()
         form_card.setObjectName("SoftCard")
         form_card.setMinimumWidth(610)
@@ -166,27 +144,18 @@ class NewProjectDialog(QDialog):
         form_layout.setContentsMargins(18, 16, 18, 16)
         form_layout.setSpacing(12)
 
-        form_layout.addWidget(
-            self._numbered_title(
-                "1",
-                "Informações do projeto",
-            )
-        )
-
+        form_layout.addWidget(self._numbered_title("1", "Informações do projeto"))
         info_row = QHBoxLayout()
         info_row.setSpacing(12)
 
         name_box = QVBoxLayout()
         name_label = QLabel("Nome do projeto")
-        name_label.setStyleSheet(
-            "font-weight:700; color:#17152A;"
-        )
+        name_label.setStyleSheet("font-weight:700; color:#17152A;")
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Minha edição incrível")
         self.name_input.setStyleSheet(
             "QLineEdit {background:#FFFFFF; color:#19172B;"
-            "border:1px solid #D7D4E8; border-radius:9px;"
-            "padding:9px 11px;}"
+            "border:1px solid #D7D4E8; border-radius:9px; padding:9px 11px;}"
             "QLineEdit:focus {border:2px solid #8B5CF6;}"
         )
         name_box.addWidget(name_label)
@@ -194,67 +163,35 @@ class NewProjectDialog(QDialog):
 
         video_box = QVBoxLayout()
         video_label = QLabel("Mídias do projeto")
-        video_label.setStyleSheet(
-            "font-weight:700; color:#17152A;"
-        )
-
+        video_label.setStyleSheet("font-weight:700; color:#17152A;")
         media_buttons = QHBoxLayout()
         media_buttons.setSpacing(6)
-
         self.video_button = QPushButton("Selecionar vídeos")
         self.video_button.setIcon(
-            app_icon(
-                "video",
-                color="#5B4A85",
-                accent="#8B5CF6",
-                size=18,
-            )
+            app_icon("video", color="#5B4A85", accent="#8B5CF6", size=18)
         )
-        self.video_button.setStyleSheet(
-            "QPushButton {background:#FFFFFF; color:#302A51;"
-            "border:1px dashed #A7A0C5; border-radius:9px;"
-            "padding:9px 11px; text-align:left;}"
-            "QPushButton:hover {border:2px solid #8B5CF6;}"
-        )
+        self.video_button.setStyleSheet(self._media_button_style())
         self.video_button.clicked.connect(self.select_video)
         self.select_video_button = self.video_button
-
         self.folder_button = QPushButton("Adicionar pasta")
         self.folder_button.setIcon(
-            app_icon(
-                "folder",
-                color="#5B4A85",
-                accent="#8B5CF6",
-                size=18,
-            )
+            app_icon("folder", color="#5B4A85", accent="#8B5CF6", size=18)
         )
-        self.folder_button.setStyleSheet(
-            "QPushButton {background:#FFFFFF; color:#302A51;"
-            "border:1px dashed #A7A0C5; border-radius:9px;"
-            "padding:9px 11px; text-align:left;}"
-            "QPushButton:hover {border:2px solid #8B5CF6;}"
-        )
+        self.folder_button.setStyleSheet(self._media_button_style())
         self.folder_button.clicked.connect(self.select_media_folder)
-
         media_buttons.addWidget(self.video_button, 1)
         media_buttons.addWidget(self.folder_button, 1)
-
         self.media_count_label = QLabel(
             "Nenhuma mídia selecionada. Você pode escolher vários vídeos ou uma pasta inteira."
         )
         self.media_count_label.setWordWrap(True)
-        self.media_count_label.setStyleSheet(
-            "font-size:11px; color:#6B6880;"
-        )
-
+        self.media_count_label.setStyleSheet("font-size:11px; color:#6B6880;")
         video_box.addWidget(video_label)
         video_box.addLayout(media_buttons)
         video_box.addWidget(self.media_count_label)
-
         info_row.addLayout(name_box, 1)
         info_row.addLayout(video_box, 1)
         form_layout.addLayout(info_row)
-
         self.video_input = QLineEdit()
         self.video_input.hide()
 
@@ -270,21 +207,14 @@ class NewProjectDialog(QDialog):
                 "Isso ajuda a otimizar a edição para seu tipo de vídeo.",
             )
         )
-
         self.profile_group = QButtonGroup(self)
         self.profile_group.setExclusive(True)
         self.profile_buttons = {}
-
         profile_grid = QGridLayout()
         profile_grid.setHorizontalSpacing(8)
         profile_grid.setVerticalSpacing(8)
-
         for index, profile in enumerate(profile_names()):
-            short_name = (
-                "Shorts"
-                if profile == "Shorts / Reels / TikTok"
-                else profile
-            )
+            short_name = "Shorts" if profile == "Shorts / Reels / TikTok" else profile
             button = SelectionCardButton(
                 short_name,
                 self._profile_short_description(profile),
@@ -297,22 +227,19 @@ class NewProjectDialog(QDialog):
             button.clicked.connect(
                 lambda checked=False, name=profile: self._set_profile(name)
             )
-            profile_grid.addWidget(
-                button,
-                index // 4,
-                index % 4,
-            )
-
+            profile_grid.addWidget(button, index // 4, index % 4)
         form_layout.addLayout(profile_grid)
+
+        # Só aparece quando o perfil Casamento está ativo.
+        self.wedding_setup = WeddingSetupWidget()
+        self.wedding_setup.setVisible(False)
+        form_layout.addWidget(self.wedding_setup)
 
         form_layout.addWidget(
             self._numbered_title(
-                "3",
-                "Estilo de edição",
-                "Escolha o ritmo e a personalidade do resultado.",
+                "3", "Estilo de edição", "Escolha o ritmo e a personalidade do resultado."
             )
         )
-
         self.style_buttons_layout = QGridLayout()
         self.style_buttons_layout.setHorizontalSpacing(8)
         self.style_buttons_layout.setVerticalSpacing(8)
@@ -323,43 +250,32 @@ class NewProjectDialog(QDialog):
 
         form_layout.addWidget(
             self._numbered_title(
-                "4",
-                "Formato do vídeo",
-                "Você pode usar qualquer formato em qualquer perfil.",
+                "4", "Formato do vídeo", "Você pode usar qualquer formato em qualquer perfil."
             )
         )
-
         self.aspect_group = QButtonGroup(self)
         self.aspect_group.setExclusive(True)
         self.aspect_buttons = {}
         aspect_row = QHBoxLayout()
         aspect_row.setSpacing(8)
-
         aspect_examples = {
             "16:9": "YouTube, TV, PC",
             "9:16": "Shorts, Reels, TikTok",
             "1:1": "Instagram Feed",
             "4:5": "Instagram, Facebook",
         }
-
         for aspect in ASPECT_RATIOS:
-            button = AspectCardButton(
-                aspect.key,
-                aspect_examples[aspect.key],
-            )
+            button = AspectCardButton(aspect.key, aspect_examples[aspect.key])
             self.aspect_group.addButton(button)
             self.aspect_buttons[aspect.key] = button
             button.clicked.connect(
                 lambda checked=False, key=aspect.key: self._set_aspect(key)
             )
             aspect_row.addWidget(button)
-
         form_layout.addLayout(aspect_row)
         form_layout.addStretch(1)
 
-        # --------------------------------------------------------------
-        # RIGHT / PREVIEW + SETTINGS
-        # --------------------------------------------------------------
+        # Direita: preview e configurações.
         right = QWidget()
         right.setMinimumWidth(390)
         right_layout = QVBoxLayout(right)
@@ -370,7 +286,6 @@ class NewProjectDialog(QDialog):
         preview_layout = QVBoxLayout(preview_card)
         preview_layout.setContentsMargins(12, 12, 12, 12)
         preview_layout.setSpacing(8)
-
         preview_header = QHBoxLayout()
         preview_header.addWidget(section_title("Pré-visualização", "preview"))
         preview_header.addStretch(1)
@@ -385,80 +300,55 @@ class NewProjectDialog(QDialog):
         self.preview_stack = QStackedWidget()
         self.preview_stack.setMinimumHeight(230)
         self.preview_stack.setStyleSheet(
-            "QStackedWidget {background:#070B18;"
-            "border:1px solid #34416F; border-radius:11px;}"
+            "QStackedWidget {background:#070B18; border:1px solid #34416F; border-radius:11px;}"
         )
-
         placeholder = QFrame()
         placeholder.setObjectName("PreviewPlaceholder")
         placeholder.setStyleSheet(
-            "QFrame#PreviewPlaceholder {"
-            "background:qlineargradient("
-            "x1:0,y1:0,x2:1,y2:1,"
-            "stop:0 #241A55, stop:.48 #18365F, stop:1 #54215E);"
+            "QFrame#PreviewPlaceholder {background:qlineargradient("
+            "x1:0,y1:0,x2:1,y2:1,stop:0 #241A55,stop:.48 #18365F,stop:1 #54215E);"
             "border-radius:10px;}"
         )
         placeholder_layout = QVBoxLayout(placeholder)
         placeholder_layout.setContentsMargins(20, 28, 20, 28)
-        placeholder_layout.setSpacing(8)
         placeholder_layout.addStretch(1)
-
         preview_icon = QLabel()
         preview_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_icon.setPixmap(
-            icon_pixmap(
-                "video",
-                color="#FFFFFF",
-                accent="#D8B4FE",
-                size=54,
-            )
+            icon_pixmap("video", color="#FFFFFF", accent="#D8B4FE", size=54)
         )
         preview_title = QLabel("Selecione um vídeo para visualizar")
         preview_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_title.setStyleSheet(
-            "font-size:15px; font-weight:800; color:#FFFFFF;"
-        )
+        preview_title.setStyleSheet("font-size:15px; font-weight:800; color:#FFFFFF;")
         preview_hint = QLabel(
-            "A prévia usa a primeira mídia selecionada. O restante entra na biblioteca do projeto."
+            "A prévia usa a primeira mídia. As demais entram no Media Bin do projeto."
         )
         preview_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_hint.setWordWrap(True)
-        preview_hint.setStyleSheet(
-            "font-size:11px; color:#C7CDED;"
-        )
-
+        preview_hint.setStyleSheet("font-size:11px; color:#C7CDED;")
         placeholder_layout.addWidget(preview_icon)
         placeholder_layout.addWidget(preview_title)
         placeholder_layout.addWidget(preview_hint)
         placeholder_layout.addStretch(1)
-
         self.video_widget = QVideoWidget()
-        self.video_widget.setStyleSheet(
-            "background:#050814; border-radius:10px;"
-        )
-
+        self.video_widget.setStyleSheet("background:#050814; border-radius:10px;")
         self.preview_stack.addWidget(placeholder)
         self.preview_stack.addWidget(self.video_widget)
-
         self.audio_output = QAudioOutput(self)
         self.audio_output.setVolume(0.35)
-
         self.player = QMediaPlayer(self)
         self.player.setAudioOutput(self.audio_output)
         self.player.setVideoOutput(self.video_widget)
-
         self.preview_play_button = QPushButton("Reproduzir")
         self.preview_play_button.setIcon(
             app_icon("play", color="#FFFFFF", accent="#C084FC", size=17)
         )
         self.preview_play_button.clicked.connect(self._toggle_preview)
-
         preview_layout.addWidget(self.preview_stack, 1)
         preview_layout.addWidget(self.preview_play_button)
         preview_layout.addWidget(
             muted_label(
-                "A primeira mídia fica como fonte principal de preview. "
-                "As demais permanecem no local original e entram no Media Bin.",
+                "A primeira mídia fica como prévia. Arquivos grandes permanecem no local original.",
                 True,
             )
         )
@@ -468,20 +358,13 @@ class NewProjectDialog(QDialog):
         settings_layout = QVBoxLayout(settings_card)
         settings_layout.setContentsMargins(12, 12, 12, 12)
         settings_layout.setSpacing(9)
-
-        settings_layout.addWidget(
-            section_title("Configurações de exportação", "settings")
-        )
-        settings_layout.addWidget(
-            muted_label("Qualidade preferida do vídeo")
-        )
-
+        settings_layout.addWidget(section_title("Configurações de exportação", "settings"))
+        settings_layout.addWidget(muted_label("Qualidade preferida do vídeo"))
         self.quality_group = QButtonGroup(self)
         self.quality_group.setExclusive(True)
         self.quality_buttons = {}
         quality_row = QHBoxLayout()
         quality_row.setSpacing(6)
-
         quality_meta = {
             "original": ("ORIGINAL", "Fonte"),
             "1080p": ("FULL HD", "Melhor"),
@@ -489,76 +372,42 @@ class NewProjectDialog(QDialog):
             "480p": ("SD", "Menor"),
             "360p": ("LEVE", "Compacto"),
         }
-
-        for profile in EXPORT_PROFILES:
-            badge, subtitle = quality_meta.get(
-                profile.key,
-                ("VIDEO", ""),
-            )
-            button = QualityCardButton(
-                profile.label,
-                badge,
-                subtitle,
-            )
-            button.setChecked(profile.key == "original")
+        for export_profile in EXPORT_PROFILES:
+            badge, subtitle = quality_meta.get(export_profile.key, ("VIDEO", ""))
+            button = QualityCardButton(export_profile.label, badge, subtitle)
+            button.setChecked(export_profile.key == "original")
             self.quality_group.addButton(button)
-            self.quality_buttons[profile.key] = button
+            self.quality_buttons[export_profile.key] = button
             button.clicked.connect(
-                lambda checked=False, key=profile.key: self._set_quality(key)
+                lambda checked=False, key=export_profile.key: self._set_quality(key)
             )
             quality_row.addWidget(button)
-
         settings_layout.addLayout(quality_row)
-
         self.captions_checkbox = ModernSwitch("Legendas automáticas")
-        self.captions_checkbox.setChecked(False)
         settings_layout.addWidget(self.captions_checkbox)
         settings_layout.addWidget(
-            muted_label(
-                "Gera legendas usando a transcrição do projeto.",
-                True,
-            )
+            muted_label("Gera legendas usando a transcrição do projeto.", True)
         )
-
         self.auto_zoom_checkbox = ModernSwitch("Zoom automático")
-        self.auto_zoom_checkbox.setChecked(False)
         settings_layout.addWidget(self.auto_zoom_checkbox)
         settings_layout.addWidget(
-            muted_label(
-                "Usa os momentos sugeridos pela análise de conteúdo.",
-                True,
-            )
+            muted_label("Quando ligado, sua escolha tem prioridade sobre o preset.", True)
         )
-
-        self.caption_style = CAPTION_STYLES[1]
-
         right_layout.addWidget(settings_card, 2)
 
         style_summary_card = card()
-        style_summary_layout = QVBoxLayout(style_summary_card)
-        style_summary_layout.setContentsMargins(12, 11, 12, 11)
-        style_summary_layout.setSpacing(5)
-        style_summary_layout.addWidget(
-            section_title(
-                "Como o TakeDream vai editar",
-                "ai",
-            )
-        )
-
+        summary_layout = QVBoxLayout(style_summary_card)
+        summary_layout.setContentsMargins(12, 11, 12, 11)
+        summary_layout.addWidget(section_title("Como o TakeDream vai editar", "ai"))
         self.style_summary_label = QLabel()
         self.style_summary_label.setProperty("muted", True)
         self.style_summary_label.setWordWrap(True)
-        style_summary_layout.addWidget(self.style_summary_label)
+        summary_layout.addWidget(self.style_summary_label)
         right_layout.addWidget(style_summary_card)
 
         self.create_button = QPushButton("Criar Projeto")
         self.create_button.setIcon(
-            app_icon(
-                "sparkles",
-                color="#FFFFFF",
-                accent="#FFFFFF",
-                size=18,
-            )
+            app_icon("sparkles", color="#FFFFFF", accent="#FFFFFF", size=18)
         )
         self.create_button.setProperty("primary", True)
         self.create_button.setMinimumHeight(48)
@@ -575,12 +424,8 @@ class NewProjectDialog(QDialog):
         page_scroll.setWidgetResizable(True)
         page_scroll.setWidget(content)
         page_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        page_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        page_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         root.addWidget(page_scroll, 1)
 
         apply_app_theme(self)
@@ -588,40 +433,40 @@ class NewProjectDialog(QDialog):
             enable_dark_title_bar(self)
         self._set_profile(self.selected_profile)
 
+    @staticmethod
+    def _media_button_style():
+        return (
+            "QPushButton {background:#FFFFFF; color:#302A51;"
+            "border:1px dashed #A7A0C5; border-radius:9px;"
+            "padding:9px 11px; text-align:left;}"
+            "QPushButton:hover {border:2px solid #8B5CF6;}"
+        )
+
     def _numbered_title(self, number, title, subtitle=None):
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-
         badge = QLabel(number)
         badge.setFixedSize(28, 28)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge.setStyleSheet(
-            "background:#7C3AED; color:#FFFFFF; border-radius:14px;"
-            "font-weight:800;"
+            "background:#7C3AED; color:#FFFFFF; border-radius:14px; font-weight:800;"
         )
         title_label = QLabel(title)
-        title_label.setStyleSheet(
-            "font-size:14px; font-weight:800; color:#17152A;"
-        )
-
+        title_label.setStyleSheet("font-size:14px; font-weight:800; color:#17152A;")
         layout.addWidget(badge)
         layout.addWidget(title_label)
-
         if subtitle:
             layout.addStretch(1)
             subtitle_label = QLabel(subtitle)
-            subtitle_label.setStyleSheet(
-                "color:#6B6880; font-size:11px;"
-            )
+            subtitle_label.setStyleSheet("color:#6B6880; font-size:11px;")
             subtitle_label.setWordWrap(True)
             layout.addWidget(subtitle_label)
-
         return container
 
     def _profile_short_description(self, profile):
-        descriptions = {
+        return {
             "YouTube": "Vídeos completos",
             "Shorts / Reels / TikTok": "Vídeos curtos",
             "Podcast": "Conversas",
@@ -630,8 +475,7 @@ class NewProjectDialog(QDialog):
             "Curso": "Aulas",
             "VSL": "Conversão",
             "Institucional": "Corporativo",
-        }
-        return descriptions.get(profile, "")
+        }.get(profile, "")
 
     @staticmethod
     def _profile_accent(profile):
@@ -648,13 +492,11 @@ class NewProjectDialog(QDialog):
 
     def _set_profile(self, profile):
         self.selected_profile = profile
-
-        profile_index = self.profile_combo.findText(profile)
-        if profile_index >= 0:
+        index = self.profile_combo.findText(profile)
+        if index >= 0:
             blocked = self.profile_combo.blockSignals(True)
-            self.profile_combo.setCurrentIndex(profile_index)
+            self.profile_combo.setCurrentIndex(index)
             self.profile_combo.blockSignals(blocked)
-
         for name, button in self.profile_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(name == profile)
@@ -665,17 +507,15 @@ class NewProjectDialog(QDialog):
         self.style_combo.addItems(styles)
         self.selected_style = styles[0]
         self._rebuild_style_buttons(styles)
+        self._set_aspect(get_profile_definition(profile).aspect_ratio)
+        self.wedding_setup.setVisible(profile == "Casamento")
 
-        suggested = get_profile_definition(profile).aspect_ratio
-        self._set_aspect(suggested)
-
-        if hasattr(self, "media_count_label"):
-            if profile == "Casamento" and not self.selected_media_paths:
+        if not self.selected_media_paths:
+            if profile == "Casamento":
                 self.media_count_label.setText(
-                    "Casamento aceita vários vídeos ou uma pasta inteira. "
-                    "Os arquivos não são copiados; o TakeDream cria o Media Bin por referência."
+                    "Casamento aceita vários vídeos ou uma pasta inteira. Os arquivos ficam no local original."
                 )
-            elif not self.selected_media_paths:
+            else:
                 self.media_count_label.setText(
                     "Nenhuma mídia selecionada. Você pode escolher vários vídeos ou uma pasta inteira."
                 )
@@ -686,11 +526,9 @@ class NewProjectDialog(QDialog):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-
         self.style_group = QButtonGroup(self)
         self.style_group.setExclusive(True)
         self.style_buttons = {}
-
         for index, style in enumerate(styles):
             preset = get_style_preset(style)
             button = SelectionCardButton(
@@ -702,8 +540,7 @@ class NewProjectDialog(QDialog):
             )
             button.setMinimumHeight(92)
             button.setToolTip(
-                f"{preset.description}\n"
-                f"Zoom: {'automático' if preset.auto_zoom else 'discreto/manual'} • "
+                f"{preset.description}\nZoom: {'automático' if preset.auto_zoom else 'discreto/manual'} • "
                 f"Legenda: {preset.caption_style}"
             )
             self.style_group.addButton(button)
@@ -711,86 +548,55 @@ class NewProjectDialog(QDialog):
             button.clicked.connect(
                 lambda checked=False, name=style: self._set_style(name)
             )
-            self.style_buttons_layout.addWidget(
-                button,
-                index // 3,
-                index % 3,
-            )
-
+            self.style_buttons_layout.addWidget(button, index // 3, index % 3)
         self._set_style(styles[0])
 
     def _set_style(self, style):
         self.selected_style = style
         preset = get_style_preset(style)
-
-        style_index = self.style_combo.findText(style)
-        if style_index >= 0:
+        index = self.style_combo.findText(style)
+        if index >= 0:
             blocked = self.style_combo.blockSignals(True)
-            self.style_combo.setCurrentIndex(style_index)
+            self.style_combo.setCurrentIndex(index)
             self.style_combo.blockSignals(blocked)
-
         for name, button in self.style_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(name == style)
             button.blockSignals(blocked)
-
         self.caption_style = preset.caption_style
+        blocked = self.captions_checkbox.blockSignals(True)
+        self.captions_checkbox.setChecked(preset.captions_enabled)
+        self.captions_checkbox.blockSignals(blocked)
+        blocked = self.auto_zoom_checkbox.blockSignals(True)
+        self.auto_zoom_checkbox.setChecked(preset.auto_zoom)
+        self.auto_zoom_checkbox.blockSignals(blocked)
 
-        if hasattr(self, "captions_checkbox"):
-            blocked = self.captions_checkbox.blockSignals(True)
-            self.captions_checkbox.setChecked(preset.captions_enabled)
-            self.captions_checkbox.blockSignals(blocked)
-
-        if hasattr(self, "auto_zoom_checkbox"):
-            blocked = self.auto_zoom_checkbox.blockSignals(True)
-            self.auto_zoom_checkbox.setChecked(preset.auto_zoom)
-            self.auto_zoom_checkbox.blockSignals(blocked)
-
-        if hasattr(self, "style_summary_label"):
-            rules = get_edit_rules(
-                self.selected_profile,
-                style,
-            )
-            silence = (
-                f"{rules.minimum_silence_ms / 1000:.2f}s"
-                if rules.automatic_silence_cuts
-                else "desativado"
-            )
-            zoom = (
-                f"{preset.zoom_scale:.2f}x a cada ~"
-                f"{preset.zoom_gap_ms // 1000}s"
-                if preset.zoom_enabled
-                else "desativado"
-            )
-            broll = (
-                f"~{preset.broll_gap_ms // 1000}s"
-                if preset.broll_enabled
-                else "desativado"
-            )
-            captions = (
-                preset.caption_style
-                if preset.captions_enabled
-                else "opcional"
-            )
-
-            self.style_summary_label.setText(
-                f"{preset.description}. "
-                f"Pausa mínima: {silence} • "
-                f"Zoom: {zoom} • "
-                f"Legenda: {captions} • "
-                f"B-roll sugerido: {broll}."
-            )
+        rules = get_edit_rules(self.selected_profile, style)
+        silence = (
+            f"{rules.minimum_silence_ms / 1000:.2f}s"
+            if rules.automatic_silence_cuts
+            else "desativado"
+        )
+        zoom = (
+            f"{preset.zoom_scale:.2f}x a cada ~{preset.zoom_gap_ms // 1000}s"
+            if preset.zoom_enabled
+            else "opcional/manual"
+        )
+        broll = f"~{preset.broll_gap_ms // 1000}s" if preset.broll_enabled else "seletor visual"
+        captions = preset.caption_style if preset.captions_enabled else "opcional"
+        self.style_summary_label.setText(
+            f"{preset.description}. Pausa mínima: {silence} • Zoom: {zoom} • "
+            f"Legenda: {captions} • B-roll: {broll}."
+        )
 
     def _set_aspect(self, aspect):
         self.selected_aspect = aspect
         self.preview_aspect_label.setText(aspect)
-
-        aspect_index = self.aspect_combo.findData(aspect)
-        if aspect_index >= 0:
+        index = self.aspect_combo.findData(aspect)
+        if index >= 0:
             blocked = self.aspect_combo.blockSignals(True)
-            self.aspect_combo.setCurrentIndex(aspect_index)
+            self.aspect_combo.setCurrentIndex(index)
             self.aspect_combo.blockSignals(blocked)
-
         for key, button in self.aspect_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(key == aspect)
@@ -798,7 +604,6 @@ class NewProjectDialog(QDialog):
 
     def _set_quality(self, quality):
         self.selected_quality = quality
-
         for key, button in self.quality_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(key == quality)
@@ -807,12 +612,10 @@ class NewProjectDialog(QDialog):
     def _sidebar_nav(self, target):
         if target == "new":
             return
-
+        self.player.stop()
         if self.host is not None and hasattr(self.host, "_navigate"):
-            self.player.stop()
             self.host._navigate(target)
             return
-
         parent = self.parent()
         if parent is not None and hasattr(parent, "_navigate"):
             self.reject()
@@ -820,18 +623,15 @@ class NewProjectDialog(QDialog):
 
     def _close_page(self):
         self.player.stop()
-
         if self.embedded and self.host is not None:
             self.host._navigate("home")
             return
-
         self.reject()
 
     def _add_media_paths(self, inputs):
         discovered = discover_media(inputs)
         if not discovered:
             return 0
-
         existing = {
             str(Path(value).expanduser().resolve()).lower()
             for value in self.selected_media_paths
@@ -844,7 +644,6 @@ class NewProjectDialog(QDialog):
             self.selected_media_paths.append(str(path.resolve()))
             existing.add(key)
             added += 1
-
         self._refresh_media_selection()
         return added
 
@@ -852,37 +651,21 @@ class NewProjectDialog(QDialog):
         if not self.selected_media_paths:
             self.video_input.clear()
             self.video_button.setText("Selecionar vídeos")
-            self.media_count_label.setText(
-                "Nenhuma mídia selecionada. Você pode escolher vários vídeos ou uma pasta inteira."
-            )
+            self.media_count_label.setText("Nenhuma mídia selecionada.")
             return
-
         primary = self.selected_media_paths[0]
         self.video_input.setText(primary)
         count = len(self.selected_media_paths)
-
         if count == 1:
             self.video_button.setText(Path(primary).name)
-            self.media_count_label.setText(
-                "1 vídeo selecionado • usado também como prévia principal."
-            )
+            self.media_count_label.setText("1 vídeo selecionado • usado também como prévia principal.")
         else:
             self.video_button.setText(f"{count} vídeos selecionados")
             self.media_count_label.setText(
-                f"{count} vídeos no Media Bin • a prévia usa {Path(primary).name}."
+                f"{count} vídeos no Media Bin • prévia: {Path(primary).name}."
             )
-
-        self.video_button.setIcon(
-            app_icon(
-                "video",
-                color="#5B4A85",
-                accent="#8B5CF6",
-                size=18,
-            )
-        )
         self.player.setSource(QUrl.fromLocalFile(primary))
         self.preview_stack.setCurrentWidget(self.video_widget)
-
         if not self.name_input.text().strip():
             self.name_input.setText(Path(primary).stem[:80])
 
@@ -891,69 +674,40 @@ class NewProjectDialog(QDialog):
             self,
             "Selecionar vídeos",
             "",
-            "Vídeos (*.mp4 *.mov *.mkv *.avi *.webm *.m4v);;"
-            "Todos os arquivos (*)",
+            "Vídeos (*.mp4 *.mov *.mkv *.avi *.webm *.m4v);;Todos os arquivos (*)",
         )
-
-        if not file_paths:
-            return
-
-        self._add_media_paths(file_paths)
+        if file_paths:
+            self._add_media_paths(file_paths)
 
     def select_media_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(
-            self,
-            "Selecionar pasta com vídeos",
-            "",
-        )
-        if not folder_path:
+        folder = QFileDialog.getExistingDirectory(self, "Selecionar pasta com vídeos", "")
+        if not folder:
             return
-
-        added = self._add_media_paths([folder_path])
-        if added == 0:
+        if self._add_media_paths([folder]) == 0:
             QMessageBox.information(
                 self,
                 "Nenhum vídeo encontrado",
-                "A pasta selecionada não possui vídeos compatíveis. "
-                "O TakeDream procura também nas subpastas.",
+                "A pasta selecionada não possui vídeos compatíveis. O TakeDream procura também nas subpastas.",
             )
 
     def _toggle_preview(self):
-        if (
-            self.player.playbackState()
-            == QMediaPlayer.PlaybackState.PlayingState
-        ):
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
             self.preview_play_button.setText("Reproduzir")
             self.preview_play_button.setIcon(
-                app_icon(
-                    "play",
-                    color="#FFFFFF",
-                    accent="#C084FC",
-                    size=17,
-                )
+                app_icon("play", color="#FFFFFF", accent="#C084FC", size=17)
             )
         else:
             self.player.play()
             self.preview_play_button.setText("Pausar")
             self.preview_play_button.setIcon(
-                app_icon(
-                    "pause",
-                    color="#FFFFFF",
-                    accent="#C084FC",
-                    size=17,
-                )
+                app_icon("pause", color="#FFFFFF", accent="#C084FC", size=17)
             )
 
     def validate_and_accept(self):
         if not self.name_input.text().strip():
-            QMessageBox.warning(
-                self,
-                "Nome obrigatório",
-                "Informe um nome para o projeto.",
-            )
+            QMessageBox.warning(self, "Nome obrigatório", "Informe um nome para o projeto.")
             return
-
         if not self.selected_media_paths and not self.video_input.text().strip():
             QMessageBox.warning(
                 self,
@@ -961,13 +715,10 @@ class NewProjectDialog(QDialog):
                 "Selecione pelo menos um vídeo ou uma pasta para o projeto.",
             )
             return
-
         self.player.stop()
-
         if self.embedded and self.host is not None:
             self.host._create_project_from_data(self.project_data())
             return
-
         self.accept()
 
     def reject(self):
@@ -978,9 +729,8 @@ class NewProjectDialog(QDialog):
         media = list(self.selected_media_paths)
         if not media and self.video_input.text().strip():
             media = [self.video_input.text().strip()]
-
         primary = media[0] if media else ""
-        return {
+        data = {
             "name": self.name_input.text().strip(),
             "source_video": primary,
             "source_videos": media[1:],
@@ -992,3 +742,15 @@ class NewProjectDialog(QDialog):
             "caption_style": self.caption_style,
             "export_quality": self.selected_quality,
         }
+        if self.selected_profile == "Casamento":
+            data.update(self.wedding_setup.data())
+        else:
+            data.update(
+                {
+                    "deliverable_type": None,
+                    "target_duration_seconds": None,
+                    "reference_video": None,
+                    "music_path": None,
+                }
+            )
+        return data
