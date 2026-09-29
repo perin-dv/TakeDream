@@ -33,6 +33,18 @@ class ProjectManager:
         ".webm",
         ".m4v",
     }
+    ALLOWED_MUSIC_EXTENSIONS = {
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".aac",
+        ".flac",
+        ".ogg",
+        ".opus",
+        ".mp4",
+        ".mov",
+        ".mkv",
+    }
 
     def __init__(self, projects_root=None):
         if projects_root is None:
@@ -56,6 +68,8 @@ class ProjectManager:
         source_videos=None,
         deliverable_type=None,
         target_duration_seconds=None,
+        reference_video=None,
+        music_path=None,
     ):
         name = name.strip()
 
@@ -102,6 +116,28 @@ class ProjectManager:
             target_duration_seconds,
         )
 
+        reference_path = None
+        music_source = None
+
+        if reference_video:
+            reference_path = Path(reference_video).expanduser().resolve()
+            if not reference_path.exists() or not reference_path.is_file():
+                raise ValueError("O vídeo de referência selecionado não existe.")
+            if reference_path.suffix.lower() not in self.ALLOWED_VIDEO_EXTENSIONS:
+                raise ValueError("O arquivo de referência não é um vídeo compatível.")
+
+        if music_path:
+            music_source = Path(music_path).expanduser().resolve()
+            if not music_source.exists() or not music_source.is_file():
+                raise ValueError("A música selecionada não existe.")
+            if music_source.suffix.lower() not in self.ALLOWED_MUSIC_EXTENSIONS:
+                raise ValueError("O arquivo de música não é compatível.")
+
+        if profile != "Casamento" and (reference_path or music_source):
+            raise ValueError(
+                "Vídeo de referência e música guiada estão disponíveis no perfil Casamento."
+            )
+
         project_dir = self._create_unique_project_directory(name)
 
         for folder in (
@@ -120,6 +156,19 @@ class ProjectManager:
         library = build_media_library(media_files)
         save_media_library(project_dir, library)
 
+        wedding_setup = None
+        if profile == "Casamento":
+            wedding_setup = {
+                "deliverable_type": deliverable.get("type") if deliverable else "trailer",
+                "target_duration_seconds": (
+                    deliverable.get("target_seconds") if deliverable else 210
+                ),
+                "reference_video_path": str(reference_path) if reference_path else None,
+                "music_source_path": str(music_source) if music_source else None,
+                "reference_enabled": bool(reference_path),
+                "music_enabled": bool(music_source),
+            }
+
         project_data = {
             "schema_version": "0.2",
             "name": name,
@@ -136,6 +185,9 @@ class ProjectManager:
             "target_duration_seconds": (
                 deliverable.get("target_seconds") if deliverable else None
             ),
+            "wedding_setup": wedding_setup,
+            "reference_video_path": str(reference_path) if reference_path else None,
+            "music_source_path": str(music_source) if music_source else None,
             "review_settings": {
                 "aspect_ratio": aspect_definition.key,
                 "captions_enabled": bool(captions_enabled),
