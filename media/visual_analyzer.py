@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from core.processing import ProcessingError
-from media.process import run_media
+from media.process import run_media, run_media_progress
 
 
 PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
@@ -116,16 +116,20 @@ class VisualAnalyzer:
             raise ProcessingError("O vídeo não foi encontrado para análise visual.")
 
         stage("Detectando mudanças de cena...")
-        progress(10)
+        progress(5)
         cuts = self.detect_scene_changes(
             source,
             duration_ms,
             threshold=scene_threshold,
             cancel=cancel,
+            progress=lambda value: progress(
+                5 + int(max(0, min(100, value)) * 0.55)
+            ),
         )
         scenes = build_scene_ranges(cuts, duration_ms)
 
         stage("Avaliando qualidade dos takes...")
+        progress(60)
         sample_indices = _sample_indices(len(scenes), max_quality_samples)
         sampled_indices = set(sample_indices)
         sampled = 0
@@ -147,7 +151,7 @@ class VisualAnalyzer:
             metrics["sampled"] = True
             scene["quality"] = metrics
             sampled += 1
-            progress(20 + int((position + 1) * 70 / max(1, len(sample_indices))))
+            progress(60 + int((position + 1) * 35 / max(1, len(sample_indices))))
 
         # Em bibliotecas grandes não compensa iniciar um processo FFmpeg para
         # cada cena. As cenas não amostradas recebem uma nota técnica neutra,
@@ -188,8 +192,22 @@ class VisualAnalyzer:
             },
         }
 
-    def detect_scene_changes(self, source, duration_ms, *, threshold=0.30, cancel=None):
-        filter_expr = f"select=gt(scene\\,{float(threshold):.3f}),showinfo"
+    def detect_scene_changes(
+        self,
+        source,
+        duration_ms,
+        *,
+        threshold=0.30,
+        cancel=None,
+        progress=lambda value: None,
+    ):
+        # A detecção não precisa trabalhar na resolução original. Reduzir o
+        # quadro antes do filtro de cena mantém os timestamps e diminui bastante
+        # o custo em material 4K/6K.
+        filter_expr = (
+            "scale=320:-2:flags=fast_bilinear,"
+            f"select=gt(scene\\,{float(threshold):.3f}),showinfo"
+        )
         command = [
             self.ffmpeg_path,
             "-hide_banner",
@@ -201,11 +219,25 @@ class VisualAnalyzer:
             "-vf",
             filter_expr,
             "-an",
+            "-sn",
+            "-dn",
             "-f",
             "null",
             "-",
         ]
-        _, stderr = self.runner(command, cancel=cancel, timeout=300)
+
+        if self.runner is run_media:
+            _, stderr = run_media_progress(
+                command,
+                duration_ms=max(1, int(duration_ms)),
+                progress=progress,
+                cancel=cancel,
+                timeout=300,
+            )
+        else:
+            progress(5)
+            _, stderr = self.runner(command, cancel=cancel, timeout=300)
+            progress(100)
 
         values = []
         for match in PTS_RE.finditer(stderr):
