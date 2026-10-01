@@ -36,6 +36,7 @@ class TimelineWidget(QWidget):
         self._story_clips = []
         self.setFixedHeight(118)
         self.setMouseTracking(True)
+        self.setStyleSheet("background:#0F1530;")
         self._apply_zoom()
 
     def sizeHint(self):
@@ -209,6 +210,10 @@ class TimelineWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Pinta todo o canvas. Antes apenas as faixas internas recebiam cor e
+        # as margens ficavam com o fundo claro padrão do QWidget no Windows.
+        painter.fillRect(self.rect(), QColor("#0F1530"))
 
         area = self._video_area()
         painter.fillRect(area, QColor("#0F1530"))
