@@ -23,6 +23,26 @@ class ProcessingWorker(QThread):
         self.mode = mode
         self.cancel = Event()
 
+    @staticmethod
+    def _library_media_count(manager, project_dir):
+        library = manager.load_media_library(project_dir)
+        if not isinstance(library, dict):
+            return 1
+        assets = library.get("assets")
+        if isinstance(assets, list):
+            return max(1, len(assets))
+        try:
+            return max(1, int(library.get("media_count", 1) or 1))
+        except (TypeError, ValueError):
+            return 1
+
+    def _should_auto_wedding(self, manager, project):
+        if project.get("profile") != "Casamento":
+            return False
+        if project.get("output_path"):
+            return False
+        return self._library_media_count(manager, self.project_dir) > 1
+
     def run(self):
         lock = QLockFile(str(self.project_dir / ".processing.lock"))
         lock.setStaleLockTime(0)
@@ -36,9 +56,33 @@ class ProcessingWorker(QThread):
             transcription_pipeline = TranscriptionPipeline()
 
             if self.mode == "load":
-                results = load_results(self.project_dir, self.cancel)
-                results.update(load_edit_state(self.project_dir))
-                self.completed.emit(results)
+                manager = transcription_pipeline.manager
+                _, project = manager.load_project(self.project_dir)
+
+                # Casamento multi-vídeo segue sozinho para a primeira montagem.
+                # O usuário não precisa clicar separadamente em Analisar e
+                # Transcrever, porque o WeddingAssembly executa apenas as etapas
+                # realmente necessárias e reaproveita cache quando disponível.
+                if self._should_auto_wedding(manager, project):
+                    self.stage.emit(
+                        "Preparando automaticamente a biblioteca e a primeira edição..."
+                    )
+                    self.progress.emit(1)
+                    result = AutoEditPipeline(
+                        manager=manager,
+                        tools=transcription_pipeline.tools,
+                    ).run(
+                        self.project_dir,
+                        cancel=self.cancel,
+                        stage=self.stage.emit,
+                        progress=self.progress.emit,
+                    )
+                    result["auto_pipeline"] = True
+                    self.completed.emit(result)
+                else:
+                    results = load_results(self.project_dir, self.cancel)
+                    results.update(load_edit_state(self.project_dir))
+                    self.completed.emit(results)
 
             elif self.mode == "analyze":
                 manager = transcription_pipeline.manager
@@ -63,7 +107,10 @@ class ProcessingWorker(QThread):
                 try:
                     library = manager.load_media_library(self.project_dir)
                     media_count = (
-                        int(library.get("media_count", 0))
+                        len(library.get("assets", []))
+                        if isinstance(library, dict)
+                        and isinstance(library.get("assets"), list)
+                        else int(library.get("media_count", 0))
                         if isinstance(library, dict)
                         else 1
                     )
