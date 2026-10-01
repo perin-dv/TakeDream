@@ -13,6 +13,16 @@ STORY_SECTIONS = (
     "finale",
 )
 
+TIE_PRIORITY = {
+    "votos_falas": 7,
+    "finale": 6,
+    "festa": 5,
+    "recepcao": 4,
+    "casal": 3,
+    "cerimonia": 2,
+    "making_of": 1,
+}
+
 
 def _plain(value):
     text = str(value or "").lower()
@@ -130,13 +140,7 @@ def _matches(text, groups):
 
 
 def analyze_story_semantics(candidate):
-    """Classifica um take usando sinais reais já disponíveis no projeto.
-
-    Esta V1 não inventa visão computacional. Ela usa caminho/nome, categoria do
-    Media Bin, texto/transcrição quando fornecidos e tags visuais somente se um
-    detector real as tiver colocado no candidato. O retorno traz confiança e
-    evidências para tornar a decisão auditável.
-    """
+    """Classifica um take usando sinais reais já disponíveis no projeto."""
     if not isinstance(candidate, dict):
         return {
             "section": "nao_classificado",
@@ -196,7 +200,13 @@ def analyze_story_semantics(candidate):
             "tags visuais: " + ", ".join(vision_evidence[section][:3])
         )
 
-    best_section = max(totals, key=totals.get)
+    best_section = max(
+        totals,
+        key=lambda section: (
+            totals[section],
+            TIE_PRIORITY.get(section, 0),
+        ),
+    )
     best_score = totals[best_section]
 
     if best_score <= 0:
@@ -207,7 +217,6 @@ def analyze_story_semantics(candidate):
             "engine": "wedding-semantics-v1",
         }
 
-    # Combina múltiplas evidências sem permitir confiança artificial > 1.
     confidence = min(0.99, best_score)
     return {
         "section": best_section,
