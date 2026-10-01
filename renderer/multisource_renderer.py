@@ -30,6 +30,7 @@ class MultiSourceRenderer:
         self.tools = ffmpeg_tools
         self.last_encoder = CPU_ENCODER
         self.last_output_size = None
+        self.last_music_ducking = False
 
     def _audio_present(self, source, cache, cancel=None):
         source = str(Path(source).resolve())
@@ -55,6 +56,7 @@ class MultiSourceRenderer:
         audio_settings,
         *,
         music_path=None,
+        music_ducking=True,
     ):
         filters = []
         labels = []
@@ -115,15 +117,32 @@ class MultiSourceRenderer:
             total_seconds = sum(int(clip["duration_ms"]) for clip in clips) / 1000.0
             music_index = len(clips)
             fade_start = max(0.0, total_seconds - 1.5)
-            filters.append(
-                f"[{base_audio}]volume=0.68[sourcea]"
-            )
-            filters.append(
-                f"[{music_index}:a:0]aresample=48000,"
-                "aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                f"atrim=duration={total_seconds:.6f},asetpts=PTS-STARTPTS,"
-                f"volume=0.30,afade=t=out:st={fade_start:.6f}:d=1.5[musica]"
-            )
+
+            if music_ducking:
+                filters.append(
+                    f"[{base_audio}]volume=0.78,asplit=2[sourcea][duckkey]"
+                )
+                filters.append(
+                    f"[{music_index}:a:0]aresample=48000,"
+                    "aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                    f"atrim=duration={total_seconds:.6f},asetpts=PTS-STARTPTS,"
+                    f"volume=0.34,afade=t=out:st={fade_start:.6f}:d=1.5[musicraw]"
+                )
+                filters.append(
+                    "[musicraw][duckkey]sidechaincompress="
+                    "threshold=0.025:ratio=7:attack=25:release=450[musica]"
+                )
+            else:
+                filters.append(
+                    f"[{base_audio}]volume=0.68[sourcea]"
+                )
+                filters.append(
+                    f"[{music_index}:a:0]aresample=48000,"
+                    "aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                    f"atrim=duration={total_seconds:.6f},asetpts=PTS-STARTPTS,"
+                    f"volume=0.30,afade=t=out:st={fade_start:.6f}:d=1.5[musica]"
+                )
+
             filters.append(
                 "[sourcea][musica]amix=inputs=2:duration=first:"
                 "dropout_transition=2:normalize=0[outa]"
@@ -243,17 +262,23 @@ class MultiSourceRenderer:
         temporary_output = Path(temporary_name)
 
         expected_duration_ms = sum(int(clip["duration_ms"]) for clip in clips)
-        graph_path.write_text(
-            self._build_graph(
-                clips,
-                width,
-                height,
-                audio_presence,
-                audio_settings,
-                music_path=resolved_music,
-            ),
-            encoding="utf-8",
-        )
+        ducking_enabled = bool(resolved_music)
+
+        def write_graph(use_ducking):
+            graph_path.write_text(
+                self._build_graph(
+                    clips,
+                    width,
+                    height,
+                    audio_presence,
+                    audio_settings,
+                    music_path=resolved_music,
+                    music_ducking=use_ducking,
+                ),
+                encoding="utf-8",
+            )
+
+        write_graph(ducking_enabled)
 
         try:
             encoder = (
@@ -268,42 +293,65 @@ class MultiSourceRenderer:
                 args = cpu_encoder_args(preset="veryfast", quality=20)
                 stage("Montando casamento pela CPU...")
 
-            try:
+            def run_current_graph(current_args):
                 run_media_progress(
                     self._command(
                         clips,
                         graph_path,
                         temporary_output,
-                        args,
+                        current_args,
                         music_path=resolved_music,
                     ),
                     duration_ms=max(1, expected_duration_ms),
                     progress=progress,
                     cancel=cancel,
                 )
+
+            try:
+                run_current_graph(args)
                 self.last_encoder = encoder
+                self.last_music_ducking = ducking_enabled
             except ProcessingCancelled:
                 raise
             except ProcessingError:
-                if not encoder.hardware:
-                    raise
-                temporary_output.unlink(missing_ok=True)
-                progress(0)
-                stage(f"{encoder.label} falhou. Continuando pela CPU...")
-                cpu_args = cpu_encoder_args(preset="veryfast", quality=20)
-                run_media_progress(
-                    self._command(
-                        clips,
-                        graph_path,
-                        temporary_output,
-                        cpu_args,
-                        music_path=resolved_music,
-                    ),
-                    duration_ms=max(1, expected_duration_ms),
-                    progress=progress,
-                    cancel=cancel,
-                )
-                self.last_encoder = CPU_ENCODER
+                if encoder.hardware:
+                    temporary_output.unlink(missing_ok=True)
+                    progress(0)
+                    stage(f"{encoder.label} falhou. Continuando pela CPU...")
+                    cpu_args = cpu_encoder_args(preset="veryfast", quality=20)
+                    try:
+                        run_current_graph(cpu_args)
+                        self.last_encoder = CPU_ENCODER
+                        self.last_music_ducking = ducking_enabled
+                    except ProcessingCancelled:
+                        raise
+                    except ProcessingError:
+                        if not ducking_enabled:
+                            raise
+                        temporary_output.unlink(missing_ok=True)
+                        progress(0)
+                        stage(
+                            "Ducking automático indisponível. "
+                            "Continuando com mix musical simples..."
+                        )
+                        write_graph(False)
+                        run_current_graph(cpu_args)
+                        self.last_encoder = CPU_ENCODER
+                        self.last_music_ducking = False
+                else:
+                    if not ducking_enabled:
+                        raise
+                    temporary_output.unlink(missing_ok=True)
+                    progress(0)
+                    stage(
+                        "Ducking automático indisponível. "
+                        "Continuando com mix musical simples..."
+                    )
+                    write_graph(False)
+                    cpu_args = cpu_encoder_args(preset="veryfast", quality=20)
+                    run_current_graph(cpu_args)
+                    self.last_encoder = CPU_ENCODER
+                    self.last_music_ducking = False
 
             check_cancelled(cancel)
             if not temporary_output.exists() or temporary_output.stat().st_size <= 0:
