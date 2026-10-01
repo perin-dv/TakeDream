@@ -12,6 +12,67 @@ from PySide6.QtWidgets import (
 )
 
 
+TOP_MENU_STYLE = """
+QFrame#TopMenuBar {
+    background: #181514;
+    border: none;
+    border-bottom: 1px solid #282321;
+}
+QToolButton#TopMenuButton {
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 10px;
+    color: #B8B1AE;
+    font-size: 12px;
+    font-weight: 500;
+}
+QToolButton#TopMenuButton:hover,
+QToolButton#TopMenuButton:pressed,
+QToolButton#TopMenuButton:checked {
+    background: #2A2523;
+    color: #FFFFFF;
+}
+QToolButton#TopMenuButton::menu-indicator {
+    image: none;
+    width: 0px;
+}
+"""
+
+DROPDOWN_STYLE = """
+QMenu {
+    background: #211E1D;
+    color: #ECE8E6;
+    border: 1px solid #3A3431;
+    border-radius: 7px;
+    padding: 5px;
+    font-size: 12px;
+}
+QMenu::item {
+    background: transparent;
+    color: #ECE8E6;
+    padding: 7px 26px 7px 10px;
+    border-radius: 5px;
+}
+QMenu::item:selected {
+    background: #37312E;
+    color: #FFFFFF;
+}
+QMenu::item:disabled {
+    color: #716A67;
+}
+QMenu::separator {
+    height: 1px;
+    background: #3A3431;
+    margin: 5px 8px;
+}
+QMenu::right-arrow {
+    width: 0px;
+    height: 0px;
+}
+"""
+
+
 class TakeDreamTopMenu(QFrame):
     navigate = Signal(str)
 
@@ -20,10 +81,11 @@ class TakeDreamTopMenu(QFrame):
         self.host = host
         self.setObjectName("TopMenuBar")
         self.setFixedHeight(36)
+        self.setStyleSheet(TOP_MENU_STYLE)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
 
         self.file_button = self._menu_button("Arquivo", self._file_menu())
         self.edit_button = self._menu_button("Editar", self._edit_menu())
@@ -45,6 +107,7 @@ class TakeDreamTopMenu(QFrame):
         button = QToolButton(self)
         button.setObjectName("TopMenuButton")
         button.setText(text)
+        button.setAutoRaise(True)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         button.setMenu(menu)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -53,6 +116,7 @@ class TakeDreamTopMenu(QFrame):
     def _new_menu(self):
         menu = QMenu(self)
         menu.setObjectName("TopDropdownMenu")
+        menu.setStyleSheet(DROPDOWN_STYLE)
         return menu
 
     def _file_menu(self):
