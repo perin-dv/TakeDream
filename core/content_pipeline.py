@@ -37,6 +37,7 @@ def _load_wedding_story_overlay(project_dir):
     if not isinstance(clips, list) or not clips:
         return None
 
+    timeline_clips = []
     blocks = []
     for clip in sorted(
         (item for item in clips if isinstance(item, dict)),
@@ -53,6 +54,20 @@ def _load_wedding_story_overlay(project_dir):
         section = str(clip.get("story_section") or "nao_classificado")
         label = STORY_LABELS.get(section, section.replace("_", " ").title())
         confidence = float(clip.get("semantic_confidence", 0) or 0)
+
+        timeline_clips.append(
+            {
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "duration_ms": end_ms - start_ms,
+                "section": section,
+                "label": label,
+                "filename": clip.get("filename"),
+                "asset_id": clip.get("asset_id"),
+                "score": float(clip.get("score", 0) or 0),
+                "semantic_confidence": confidence,
+            }
+        )
 
         if (
             blocks
@@ -90,7 +105,7 @@ def _load_wedding_story_overlay(project_dir):
         return None
 
     return {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "engine": "wedding-story-timeline-v2",
         "duration_ms": int(plan.get("estimated_duration_ms", blocks[-1]["end_ms"]) or 0),
         "clip_count": int(plan.get("clip_count", len(clips)) or len(clips)),
@@ -98,6 +113,7 @@ def _load_wedding_story_overlay(project_dir):
         "story_builder": plan.get("story_builder"),
         "sections": plan.get("story_sections", []),
         "blocks": blocks,
+        "clips": timeline_clips,
     }
 
 
