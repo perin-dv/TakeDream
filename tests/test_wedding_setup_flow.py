@@ -149,14 +149,16 @@ class ReferenceDrivenAssemblyTests(unittest.TestCase):
 
 
 class MultiSourceMusicGraphTests(unittest.TestCase):
-    def test_music_is_mixed_under_source_audio(self):
-        renderer = MultiSourceRenderer(None)
-        clips = [
+    def _clips(self):
+        return [
             {"duration_ms": 2000, "zoom_scale": 1.0},
             {"duration_ms": 3000, "zoom_scale": 1.0},
         ]
+
+    def test_music_uses_sidechain_ducking_under_source_audio(self):
+        renderer = MultiSourceRenderer(None)
         graph = renderer._build_graph(
-            clips,
+            self._clips(),
             1920,
             1080,
             [True, True],
@@ -165,9 +167,27 @@ class MultiSourceMusicGraphTests(unittest.TestCase):
         )
 
         self.assertIn("[2:a:0]", graph)
+        self.assertIn("sidechaincompress", graph)
+        self.assertIn("asplit=2[sourcea][duckkey]", graph)
+        self.assertIn("volume=0.34", graph)
         self.assertIn("amix=inputs=2", graph)
-        self.assertIn("volume=0.30", graph)
         self.assertIn("[outa]", graph)
+
+    def test_simple_music_mix_remains_available_as_fallback(self):
+        renderer = MultiSourceRenderer(None)
+        graph = renderer._build_graph(
+            self._clips(),
+            1920,
+            1080,
+            [True, True],
+            None,
+            music_path="trilha.mp3",
+            music_ducking=False,
+        )
+
+        self.assertNotIn("sidechaincompress", graph)
+        self.assertIn("volume=0.30", graph)
+        self.assertIn("amix=inputs=2", graph)
 
 
 if __name__ == "__main__":
