@@ -4,9 +4,9 @@ from __future__ import annotations
 def is_usable_wedding_candidate(candidate):
     """Quality gate conservador para o primeiro corte de casamento.
 
-    Cenas realmente amostradas pelo FFmpeg e marcadas como fracas são
-    descartadas. Cenas cuja qualidade foi apenas estimada continuam elegíveis,
-    porque não temos evidência suficiente para rejeitá-las.
+    O score visual atual é um sinal técnico, não um veredito semântico. Por isso
+    cenas medianas/ruins ficam no fim do ranking em vez de serem descartadas cedo
+    demais. Só rejeitamos material realmente inutilizável ou curto demais.
     """
     if not isinstance(candidate, dict):
         return False
@@ -26,9 +26,11 @@ def is_usable_wedding_candidate(candidate):
     label = str(candidate.get("quality_label") or "").strip().lower()
     sampled = candidate.get("quality_sampled") is True
 
-    if sampled and (label == "fraca" or quality < 52.0):
+    # Hard reject apenas quando há evidência forte de take praticamente
+    # inutilizável. O restante continua elegível como fallback de duração.
+    if sampled and label == "fraca" and quality < 30.0:
         return False
-    if label == "fraca" and quality < 48.0:
+    if sampled and quality > 0 and quality < 24.0:
         return False
 
     return True
@@ -45,10 +47,17 @@ def candidate_selection_score(candidate):
     duration_bonus = min(4.0, duration_ms / 2500.0)
     semantic_bonus = semantic * 8.0
     sampled_bonus = 1.5 if candidate.get("quality_sampled") is True else 0.0
-    degraded_penalty = 7.0 if candidate.get("quality_label") == "fraca" else 0.0
+
+    label = str(candidate.get("quality_label") or "").strip().lower()
+    if label == "fraca":
+        quality_penalty = 22.0
+    elif label == "utilizavel":
+        quality_penalty = 3.0
+    else:
+        quality_penalty = 0.0
 
     return round(
-        quality + semantic_bonus + duration_bonus + sampled_bonus - degraded_penalty,
+        quality + semantic_bonus + duration_bonus + sampled_bonus - quality_penalty,
         3,
     )
 
