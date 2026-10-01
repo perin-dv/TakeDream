@@ -114,19 +114,12 @@ class VisualAnalyzer:
         if not source.exists():
             raise ProcessingError("O vídeo não foi encontrado para análise visual.")
 
-        stage("Detectando mudanças de cena... 0%")
+        stage("Detectando mudanças de cena...")
         progress(5)
-
-        last_scene_percent = {-1}
 
         def scene_progress(value):
             value = max(0, min(100, int(value)))
             progress(5 + int(value * 0.55))
-            bucket = int(value / 2) * 2
-            if bucket not in last_scene_percent:
-                last_scene_percent.clear()
-                last_scene_percent.add(bucket)
-                stage(f"Detectando mudanças de cena... {value}%")
 
         cuts = self.detect_scene_changes(
             source,
@@ -137,7 +130,7 @@ class VisualAnalyzer:
         )
         scenes = build_scene_ranges(cuts, duration_ms)
 
-        stage("Avaliando qualidade dos takes... 0%")
+        stage("Avaliando qualidade dos takes...")
         progress(60)
         sample_indices = _sample_indices(len(scenes), max_quality_samples)
         sampled_indices = set(sample_indices)
@@ -162,10 +155,6 @@ class VisualAnalyzer:
             sampled += 1
             quality_percent = int((position + 1) * 100 / max(1, len(sample_indices)))
             progress(60 + int(quality_percent * 0.35))
-            stage(
-                f"Avaliando qualidade dos takes... {quality_percent}% "
-                f"({position + 1}/{len(sample_indices)})"
-            )
 
         for index, scene in enumerate(scenes):
             if index in sampled_indices:
@@ -188,7 +177,7 @@ class VisualAnalyzer:
         )
 
         progress(100)
-        stage("Análise visual concluída • 100%")
+        stage("Análise visual concluída.")
         return {
             "schema_version": "0.1",
             "scene_threshold": float(scene_threshold),
