@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from core.best_shot_selector import (
+    asset_usage,
+    per_asset_limit,
+    rank_wedding_candidates,
+    source_too_close,
+)
 from core.wedding_semantics import (
     analyze_story_semantics,
     enrich_story_candidate,
@@ -29,11 +35,6 @@ STORY_LABELS = {
 
 
 def classify_story_section(candidate):
-    """Compatibilidade pública para a classificação da narrativa.
-
-    A decisão agora passa pelo classificador semântico V1, que também expõe
-    confiança e evidências quando usado por ``build_story_candidate_plan``.
-    """
     return analyze_story_semantics(candidate).get(
         "section",
         "nao_classificado",
@@ -94,12 +95,7 @@ def build_story_candidate_plan(
     base_clip_ms,
     max_clips,
 ):
-    """Seleciona e ordena candidatos por capítulos de casamento.
-
-    O Story Builder trabalha com decisões auditáveis. Cada candidato recebe a
-    seção, confiança e evidências semânticas; material sem evidência suficiente
-    continua disponível como fallback por qualidade.
-    """
+    """Seleciona, diversifica e ordena takes por capítulos de casamento."""
     candidates = [
         enrich_story_candidate(dict(item))
         for item in candidates
@@ -109,6 +105,13 @@ def build_story_candidate_plan(
     target_ms = max(1000, int(target_ms))
     base_clip_ms = max(500, int(base_clip_ms))
     max_clips = max(1, int(max_clips))
+
+    deliverable_type = (
+        deliverable.get("type", "trailer")
+        if isinstance(deliverable, dict)
+        else "trailer"
+    )
+    preferred_asset_limit = per_asset_limit(deliverable_type)
 
     asset_order = {
         asset.get("id"): index
@@ -125,19 +128,12 @@ def build_story_candidate_plan(
         else:
             unclassified.append(candidate)
 
-    def rank(items):
-        return sorted(
-            items,
-            key=lambda item: (
-                float(item.get("score", 0) or 0),
-                float(item.get("semantic_confidence", 0) or 0),
-                int(item.get("duration_ms", 0) or 0),
-            ),
-            reverse=True,
-        )
-
-    grouped = {name: rank(items) for name, items in grouped.items()}
-    unclassified = rank(unclassified)
+    grouped = {
+        name: rank_wedding_candidates(items)
+        for name, items in grouped.items()
+    }
+    unclassified = rank_wedding_candidates(unclassified)
+    ranked_all = rank_wedding_candidates(candidates)
     budgets = _section_budgets(deliverable, target_ms)
 
     selected = []
@@ -155,6 +151,42 @@ def build_story_candidate_plan(
         for name in STORY_ORDER
     }
 
+    def can_use(candidate, *, strict=True):
+        key = _candidate_key(candidate)
+        if key in selected_keys:
+            return False
+        if source_too_close(
+            candidate,
+            selected,
+            minimum_gap_ms=1200 if strict else 350,
+        ):
+            return False
+        if strict:
+            counts = asset_usage(selected)
+            asset_id = candidate.get("asset_id")
+            if asset_id and counts.get(asset_id, 0) >= preferred_asset_limit:
+                return False
+        return True
+
+    def append_candidate(candidate, section=None):
+        nonlocal estimated_total
+        copy = dict(candidate)
+        copy["story_section"] = (
+            section
+            or copy.get("story_section")
+            or copy.get("semantic_story_section")
+            or "nao_classificado"
+        )
+        selected.append(copy)
+        selected_keys.add(_candidate_key(copy))
+        estimate = _duration_ms(copy, base_clip_ms)
+        estimated_total += estimate
+        story_section = copy.get("story_section")
+        if story_section in section_stats:
+            section_stats[story_section]["estimated_ms"] += estimate
+            section_stats[story_section]["selected_count"] += 1
+        return estimate
+
     for section in STORY_ORDER:
         quota = budgets.get(section, 0)
         if quota <= 0 or not grouped[section]:
@@ -167,61 +199,62 @@ def build_story_candidate_plan(
             for candidate in pool:
                 if len(selected) >= max_clips:
                     break
-                key = _candidate_key(candidate)
-                if key in selected_keys:
-                    continue
                 asset_id = candidate.get("asset_id")
                 if diversity_pass and asset_id in used_assets:
+                    continue
+                if not can_use(candidate, strict=True):
                     continue
                 if not diversity_pass and section_stats[section]["estimated_ms"] >= quota:
                     break
 
-                selected.append(candidate)
-                selected_keys.add(key)
+                append_candidate(candidate, section)
                 used_assets.add(asset_id)
-                estimate = _duration_ms(candidate, base_clip_ms)
-                estimated_total += estimate
-                section_stats[section]["estimated_ms"] += estimate
-                section_stats[section]["selected_count"] += 1
-
                 if section_stats[section]["estimated_ms"] >= quota:
                     break
+
             if section_stats[section]["estimated_ms"] >= quota or len(selected) >= max_clips:
                 break
 
-    fallback_pool = unclassified + rank(candidates)
+    fallback_pool = unclassified + ranked_all
     for candidate in fallback_pool:
         if len(selected) >= max_clips or estimated_total >= target_ms:
             break
-        key = _candidate_key(candidate)
-        if key in selected_keys:
+        if not can_use(candidate, strict=True):
             continue
-        copy = dict(candidate)
-        copy["story_section"] = copy.get("story_section") or "nao_classificado"
-        selected.append(copy)
-        selected_keys.add(key)
-        estimated_total += _duration_ms(copy, base_clip_ms)
+        append_candidate(candidate)
 
+    # Garante que mídias ainda ausentes tenham uma chance antes de relaxar os
+    # limites de repetição. Isso mantém variedade de câmera em lotes pequenos.
     if len(selected) < max_clips:
-        ranked_all = rank(candidates)
         present_assets = {item.get("asset_id") for item in selected}
         for asset in assets:
             asset_id = asset.get("id")
             if asset_id in present_assets:
                 continue
-            best = next((item for item in ranked_all if item.get("asset_id") == asset_id), None)
+            best = next(
+                (
+                    item for item in ranked_all
+                    if item.get("asset_id") == asset_id
+                    and _candidate_key(item) not in selected_keys
+                ),
+                None,
+            )
             if best is None:
                 continue
-            key = _candidate_key(best)
-            if key in selected_keys:
-                continue
-            copy = dict(best)
-            copy["story_section"] = copy.get("semantic_story_section") or "nao_classificado"
-            selected.append(copy)
-            selected_keys.add(key)
+            append_candidate(best)
             present_assets.add(asset_id)
             if len(selected) >= max_clips:
                 break
+
+    # Se referência/filme longo exigir mais takes, relaxa apenas o limite por
+    # mídia. Ainda bloqueia sobreposição e cenas praticamente consecutivas.
+    if estimated_total < target_ms and len(selected) < max_clips:
+        for candidate in ranked_all:
+            if len(selected) >= max_clips or estimated_total >= target_ms:
+                break
+            if not can_use(candidate, strict=False):
+                continue
+            append_candidate(candidate)
 
     order = {name: index for index, name in enumerate(STORY_ORDER)}
     selected.sort(
@@ -242,8 +275,9 @@ def build_story_candidate_plan(
     ]
 
     return {
-        "schema_version": "0.2",
+        "schema_version": "0.3",
         "engine": "wedding-story-builder-v1",
+        "best_shot_engine": "best-shot-selector-v2",
         "semantic_engine": "wedding-semantics-v1",
         "story_order": list(STORY_ORDER),
         "selected_candidates": selected,
@@ -255,4 +289,6 @@ def build_story_candidate_plan(
             if confidences
             else 0.0
         ),
+        "preferred_per_asset_limit": preferred_asset_limit,
+        "selected_asset_usage": asset_usage(selected),
     }
