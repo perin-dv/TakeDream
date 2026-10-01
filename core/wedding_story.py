@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import unicodedata
+from core.wedding_semantics import (
+    analyze_story_semantics,
+    enrich_story_candidate,
+)
 
 
 STORY_ORDER = (
@@ -25,134 +28,16 @@ STORY_LABELS = {
 }
 
 
-def _plain_text(value):
-    text = str(value or "").lower()
-    text = unicodedata.normalize("NFKD", text)
-    return "".join(char for char in text if not unicodedata.combining(char))
-
-
 def classify_story_section(candidate):
-    """Classifica um take usando metadados locais e convenções de pastas/nomes.
+    """Compatibilidade pública para a classificação da narrativa.
 
-    É uma heurística deliberadamente simples para a V1. O contrato do Story
-    Builder permite substituir essa origem por visão/transcrição semântica no
-    futuro sem mudar o montador.
+    A decisão agora passa pelo classificador semântico V1, que também expõe
+    confiança e evidências quando usado por ``build_story_candidate_plan``.
     """
-    if not isinstance(candidate, dict):
-        return "nao_classificado"
-
-    category = _plain_text(candidate.get("category_hint"))
-    text = " ".join(
-        _plain_text(candidate.get(key))
-        for key in ("path", "filename", "category_hint")
+    return analyze_story_semantics(candidate).get(
+        "section",
+        "nao_classificado",
     )
-
-    keyword_groups = (
-        (
-            "finale",
-            (
-                "sparkler",
-                "despedida",
-                "encerramento",
-                "saida dos noivos",
-                "saida noivos",
-                "chuva de arroz",
-                "finale",
-            ),
-        ),
-        (
-            "votos_falas",
-            (
-                "voto",
-                "votos",
-                "discurso",
-                "speech",
-                "depoimento",
-                "celebrante",
-                "padre",
-                "pastor",
-                "brinde fala",
-                "toast",
-            ),
-        ),
-        (
-            "festa",
-            (
-                "festa",
-                "balada",
-                "dance",
-                "pista",
-                "dj",
-                "danca",
-                "dancing",
-            ),
-        ),
-        (
-            "recepcao",
-            (
-                "recepcao",
-                "salao",
-                "bolo",
-                "mesa",
-                "entrada salao",
-                "brinde",
-                "jantar",
-            ),
-        ),
-        (
-            "casal",
-            (
-                "casal",
-                "ensaio",
-                "externa",
-                "pos wedding",
-                "pos-wedding",
-                "retratos",
-                "portrait",
-            ),
-        ),
-        (
-            "cerimonia",
-            (
-                "cerimonia",
-                "igreja",
-                "altar",
-                "alianca",
-                "beijo",
-                "entrada noiva",
-                "entrada noivo",
-                "entrada padrinhos",
-            ),
-        ),
-        (
-            "making_of",
-            (
-                "making",
-                "preparacao",
-                "preparativos",
-                "maquiagem",
-                "vestido",
-                "making noiva",
-                "making noivo",
-            ),
-        ),
-    )
-
-    for section, needles in keyword_groups:
-        if any(needle in text for needle in needles):
-            return section
-
-    category_map = {
-        "making_of_noiva": "making_of",
-        "making_of_noivo": "making_of",
-        "decoracao": "making_of",
-        "drone": "making_of",
-        "cerimonia": "cerimonia",
-        "casal": "casal",
-        "recepcao": "recepcao",
-        "festa": "festa",
-    }
-    return category_map.get(category, "nao_classificado")
 
 
 def _candidate_key(candidate):
@@ -176,7 +61,6 @@ def _section_budgets(deliverable, target_ms):
     story_budget = deliverable.get("story_budget") if isinstance(deliverable, dict) else None
     sections = story_budget.get("sections") if isinstance(story_budget, dict) else None
     if not isinstance(sections, dict):
-        # Fallback equilibrado apenas para projetos legados sem story_budget.
         weights = {
             "making_of": 0.14,
             "cerimonia": 0.24,
@@ -212,11 +96,15 @@ def build_story_candidate_plan(
 ):
     """Seleciona e ordena candidatos por capítulos de casamento.
 
-    O resultado ainda não corta/renderiza. Ele decide *o que* deve entrar e em
-    qual capítulo; wedding_assembly decide a janela exata e aplica referência,
-    música e efeitos.
+    O Story Builder trabalha com decisões auditáveis. Cada candidato recebe a
+    seção, confiança e evidências semânticas; material sem evidência suficiente
+    continua disponível como fallback por qualidade.
     """
-    candidates = [dict(item) for item in candidates if isinstance(item, dict)]
+    candidates = [
+        enrich_story_candidate(dict(item))
+        for item in candidates
+        if isinstance(item, dict)
+    ]
     assets = [item for item in (assets or []) if isinstance(item, dict)]
     target_ms = max(1000, int(target_ms))
     base_clip_ms = max(500, int(base_clip_ms))
@@ -230,7 +118,7 @@ def build_story_candidate_plan(
     grouped = {name: [] for name in STORY_ORDER}
     unclassified = []
     for candidate in candidates:
-        section = classify_story_section(candidate)
+        section = candidate.get("semantic_story_section") or "nao_classificado"
         candidate["story_section"] = section
         if section in grouped:
             grouped[section].append(candidate)
@@ -242,6 +130,7 @@ def build_story_candidate_plan(
             items,
             key=lambda item: (
                 float(item.get("score", 0) or 0),
+                float(item.get("semantic_confidence", 0) or 0),
                 int(item.get("duration_ms", 0) or 0),
             ),
             reverse=True,
@@ -274,7 +163,6 @@ def build_story_candidate_plan(
         used_assets = set()
         pool = grouped[section]
 
-        # Primeira passada: variedade de mídia/câmera dentro do capítulo.
         for diversity_pass in (True, False):
             for candidate in pool:
                 if len(selected) >= max_clips:
@@ -301,8 +189,6 @@ def build_story_candidate_plan(
             if section_stats[section]["estimated_ms"] >= quota or len(selected) >= max_clips:
                 break
 
-    # Material sem classificação continua aproveitável. Ele completa buracos do
-    # orçamento em vez de ser descartado silenciosamente.
     fallback_pool = unclassified + rank(candidates)
     for candidate in fallback_pool:
         if len(selected) >= max_clips or estimated_total >= target_ms:
@@ -316,8 +202,6 @@ def build_story_candidate_plan(
         selected_keys.add(key)
         estimated_total += _duration_ms(copy, base_clip_ms)
 
-    # Em lotes pequenos, garante ao menos uma chance para cada mídia. Isso
-    # evita voltar ao problema antigo de analisar 8 vídeos e montar só o primeiro.
     if len(selected) < max_clips:
         ranked_all = rank(candidates)
         present_assets = {item.get("asset_id") for item in selected}
@@ -332,7 +216,7 @@ def build_story_candidate_plan(
             if key in selected_keys:
                 continue
             copy = dict(best)
-            copy["story_section"] = classify_story_section(copy)
+            copy["story_section"] = copy.get("semantic_story_section") or "nao_classificado"
             selected.append(copy)
             selected_keys.add(key)
             present_assets.add(asset_id)
@@ -348,12 +232,27 @@ def build_story_candidate_plan(
         )
     )
 
+    classified = [
+        item for item in candidates
+        if item.get("semantic_story_section") in STORY_ORDER
+    ]
+    confidences = [
+        float(item.get("semantic_confidence", 0) or 0)
+        for item in classified
+    ]
+
     return {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "engine": "wedding-story-builder-v1",
+        "semantic_engine": "wedding-semantics-v1",
         "story_order": list(STORY_ORDER),
         "selected_candidates": selected,
         "section_stats": [section_stats[name] for name in STORY_ORDER],
-        "classified_candidates": sum(len(grouped[name]) for name in STORY_ORDER),
-        "unclassified_candidates": len(unclassified),
+        "classified_candidates": len(classified),
+        "unclassified_candidates": len(candidates) - len(classified),
+        "average_semantic_confidence": (
+            round(sum(confidences) / len(confidences), 3)
+            if confidences
+            else 0.0
+        ),
     }
