@@ -169,7 +169,7 @@ class MultiSourceMusicGraphTests(unittest.TestCase):
         self.assertIn("[2:a:0]", graph)
         self.assertIn("sidechaincompress", graph)
         self.assertIn("asplit=2[sourcea][duckkey]", graph)
-        self.assertIn("volume=0.34", graph)
+        self.assertIn("volume=0.40", graph)
         self.assertIn("amix=inputs=2", graph)
         self.assertIn("[outa]", graph)
 
@@ -186,7 +186,7 @@ class MultiSourceMusicGraphTests(unittest.TestCase):
         )
 
         self.assertNotIn("sidechaincompress", graph)
-        self.assertIn("volume=0.30", graph)
+        self.assertIn("volume=0.34", graph)
         self.assertIn("amix=inputs=2", graph)
 
 
