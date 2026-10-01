@@ -99,7 +99,7 @@ def source_too_close(candidate, selected, minimum_gap_ms=1200):
         except (TypeError, ValueError):
             continue
 
-        overlap = min(end, other_end) - max(start, other_end if False else other_start)
+        overlap = min(end, other_end) - max(start, other_start)
         if overlap > 0:
             return True
 
