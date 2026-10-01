@@ -47,6 +47,25 @@ def _next_output_path(root):
         counter += 1
 
 
+def _real_media_count(manager, root, project):
+    library = manager.load_media_library(root)
+    if isinstance(library, dict):
+        assets = library.get("assets")
+        if isinstance(assets, list) and assets:
+            return len(assets)
+        try:
+            count = int(library.get("media_count", 0) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            return count
+
+    try:
+        return max(1, int(project.get("media_count", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def load_edit_state(project_dir):
     root = Path(project_dir).expanduser().resolve()
     state = {
@@ -93,15 +112,24 @@ class AutoEditPipeline:
         progress=lambda value: None,
     ):
         root, project = self.manager.load_project(project_dir)
+        media_count = _real_media_count(self.manager, root, project)
 
-        # Casamento com Media Bin usa uma timeline multi-source. Não cai no
-        # pipeline legado de uma única mídia, pois isso fazia 8+ arquivos serem
-        # analisados e depois descartados, renderizando apenas o primeiro vídeo.
-        if (
-            project.get("profile") == "Casamento"
-            and int(project.get("media_count", 1) or 1) > 1
-        ):
-            stage("Preparando montagem multi-vídeo do casamento...")
+        # Casamento com Media Bin usa uma timeline multi-source. A decisão usa
+        # a biblioteca real e não apenas o campo media_count do project.json,
+        # pois projetos antigos/stale podiam voltar ao pipeline de uma única
+        # mídia e renderizar só ~20-30 segundos do primeiro arquivo.
+        if project.get("profile") == "Casamento" and media_count > 1:
+            if int(project.get("media_count", 1) or 1) != media_count:
+                self.manager.update_processing(
+                    root,
+                    project.get("status", "created"),
+                    media_count=media_count,
+                )
+                _, project = self.manager.load_project(root)
+
+            stage(
+                f"Preparando montagem multi-vídeo do casamento com {media_count} mídias..."
+            )
             progress(1)
             return WeddingAssemblyPipeline(
                 manager=self.manager,
