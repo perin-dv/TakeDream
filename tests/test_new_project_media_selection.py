@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication
 
 from app.windows.new_project_dialog import NewProjectDialog
@@ -14,6 +15,15 @@ class NewProjectMediaSelectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def _close_dialog(self, dialog):
+        # QMediaPlayer/FFmpeg pode manter um handle do arquivo aberto no Windows
+        # mesmo depois de stop(). Como estes testes usam TemporaryDirectory,
+        # removemos a source explicitamente antes da limpeza da pasta.
+        dialog.player.stop()
+        dialog.player.setSource(QUrl())
+        dialog.close()
+        self.app.processEvents()
 
     def test_multiple_videos_are_forwarded_to_project_data(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -34,7 +44,7 @@ class NewProjectMediaSelectionTests(unittest.TestCase):
                 self.assertEqual(data["source_videos"], [str(second.resolve())])
                 self.assertIn("2 vídeos", dialog.media_count_label.text())
             finally:
-                dialog.close()
+                self._close_dialog(dialog)
 
     def test_folder_selection_discovers_videos_recursively(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -54,7 +64,7 @@ class NewProjectMediaSelectionTests(unittest.TestCase):
                 names = {Path(value).name for value in dialog.selected_media_paths}
                 self.assertEqual(names, {"C001.mp4", "D001.m4v"})
             finally:
-                dialog.close()
+                self._close_dialog(dialog)
 
 
 if __name__ == "__main__":
