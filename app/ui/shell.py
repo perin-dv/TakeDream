@@ -1,15 +1,8 @@
-import shutil
-from pathlib import Path
-
-from PySide6.QtCore import QUrl, Signal, Qt
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
-    QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
 
@@ -47,13 +40,7 @@ class TakeDreamSidebar(QFrame):
 
         layout.addWidget(self.brand)
         layout.addWidget(subtitle)
-
-        self.menu_button = QPushButton("☰  Menu")
-        self.menu_button.setObjectName("AppMenuButton")
-        self.menu_button.setToolTip("Abrir menu do TakeDream")
-        self.menu_button.setMenu(self._build_menu())
-        layout.addWidget(self.menu_button)
-        layout.addSpacing(10)
+        layout.addSpacing(22)
 
         items = (
             ("home", "home", "Início"),
@@ -142,144 +129,6 @@ class TakeDreamSidebar(QFrame):
         promo_layout.addWidget(promo_text)
         promo_layout.addWidget(promo_art)
         layout.addWidget(promo)
-
-    def _build_menu(self):
-        menu = QMenu(self)
-        menu.setObjectName("AppMenu")
-
-        file_menu = menu.addMenu("Arquivo")
-        file_menu.addAction("Novo projeto", lambda: self.navigate.emit("new"))
-        file_menu.addAction("Projetos", lambda: self.navigate.emit("projects"))
-        file_menu.addAction("Exportações", lambda: self.navigate.emit("exports"))
-
-        edit_menu = menu.addMenu("Editar")
-        edit_menu.addAction("Abrir revisão", lambda: self.navigate.emit("review"))
-        edit_menu.addAction("Configurações", lambda: self.navigate.emit("settings"))
-
-        view_menu = menu.addMenu("Exibir")
-        view_menu.addAction("Início", lambda: self.navigate.emit("home"))
-        view_menu.addAction("Projetos", lambda: self.navigate.emit("projects"))
-        view_menu.addAction("Revisão", lambda: self.navigate.emit("review"))
-
-        tools_menu = menu.addMenu("Ferramentas")
-        tools_menu.addAction("Configurações", lambda: self.navigate.emit("settings"))
-        tools_menu.addSeparator()
-        self.open_cache_action = tools_menu.addAction(
-            "Abrir pasta de cache",
-            self._open_project_cache,
-        )
-        self.clear_cache_action = tools_menu.addAction(
-            "Limpar cache temporário deste projeto...",
-            self._clear_project_cache,
-        )
-
-        help_menu = menu.addMenu("Ajuda")
-        help_menu.addAction("Sobre o TakeDream", self._show_about)
-
-        menu.aboutToShow.connect(self._update_context_actions)
-        return menu
-
-    def _context_widget(self):
-        widget = self.parentWidget()
-        while widget is not None:
-            if hasattr(widget, "project_dir"):
-                return widget
-            widget = widget.parentWidget()
-        return None
-
-    def _project_cache_dir(self):
-        context = self._context_widget()
-        if context is None:
-            return None
-        try:
-            project_dir = Path(context.project_dir).expanduser().resolve()
-        except (AttributeError, TypeError, ValueError):
-            return None
-        return project_dir / "cache"
-
-    def _update_context_actions(self):
-        available = self._project_cache_dir() is not None
-        self.open_cache_action.setEnabled(available)
-        self.clear_cache_action.setEnabled(available)
-
-    def _open_project_cache(self):
-        cache_dir = self._project_cache_dir()
-        if cache_dir is None:
-            QMessageBox.information(
-                self,
-                "Cache",
-                "Abra um projeto para acessar o cache dele.",
-            )
-            return
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(cache_dir)))
-
-    def _clear_project_cache(self):
-        context = self._context_widget()
-        cache_dir = self._project_cache_dir()
-        if cache_dir is None:
-            QMessageBox.information(
-                self,
-                "Cache",
-                "Abra um projeto para limpar o cache dele.",
-            )
-            return
-
-        if context is not None and getattr(context, "worker", None) is not None:
-            QMessageBox.warning(
-                self,
-                "Processamento em andamento",
-                "Espere o processamento terminar ou cancele antes de limpar o cache.",
-            )
-            return
-
-        file_count = 0
-        size_bytes = 0
-        if cache_dir.exists():
-            for path in cache_dir.rglob("*"):
-                if not path.is_file():
-                    continue
-                file_count += 1
-                try:
-                    size_bytes += path.stat().st_size
-                except OSError:
-                    pass
-
-        if file_count == 0:
-            QMessageBox.information(
-                self,
-                "Cache",
-                "O cache temporário deste projeto já está vazio.",
-            )
-            return
-
-        answer = QMessageBox.question(
-            self,
-            "Limpar cache temporário",
-            "Deseja apagar o cache temporário deste projeto?\n\n"
-            "Isso remove miniaturas e arquivos temporários. "
-            "As mídias originais e o project.json não são apagados.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-
-        shutil.rmtree(cache_dir, ignore_errors=True)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        size_mb = size_bytes / (1024 * 1024)
-        QMessageBox.information(
-            self,
-            "Cache limpo",
-            f"{file_count} arquivo(s) temporário(s) removido(s) • {size_mb:.1f} MB liberados.",
-        )
-
-    def _show_about(self):
-        QMessageBox.information(
-            self,
-            "Sobre o TakeDream",
-            "TakeDream\nEdição assistida por IA com revisão humana na timeline.",
-        )
 
     def set_active(self, key):
         for name, button in self.buttons.items():
