@@ -33,6 +33,7 @@ class TimelineWidget(QWidget):
         self._thumbnails = []
         self._content_analysis = None
         self._story_blocks = []
+        self._story_clips = []
         self.setFixedHeight(118)
         self.setMouseTracking(True)
         self._apply_zoom()
@@ -89,15 +90,24 @@ class TimelineWidget(QWidget):
             else None
         )
         blocks = story.get("blocks") if isinstance(story, dict) else None
+        clips = story.get("clips") if isinstance(story, dict) else None
         self._story_blocks = [
             dict(item)
             for item in (blocks or [])
+            if isinstance(item, dict)
+        ]
+        self._story_clips = [
+            dict(item)
+            for item in (clips or [])
             if isinstance(item, dict)
         ]
         self.update()
 
     def story_blocks(self):
         return [dict(item) for item in self._story_blocks]
+
+    def story_clips(self):
+        return [dict(item) for item in self._story_clips]
 
     def set_playhead_source_ms(self, value):
         if self._plan is None:
@@ -175,6 +185,26 @@ class TimelineWidget(QWidget):
                     text,
                 )
                 painter.setPen(Qt.PenStyle.NoPen)
+
+    def _paint_multisource_cuts(self, painter, area, duration):
+        if not self._story_clips or duration <= 0:
+            return
+
+        painter.setPen(QPen(QColor(255, 255, 255, 115), 1))
+        for clip in self._story_clips[1:]:
+            try:
+                start_ms = int(clip.get("start_ms", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if start_ms <= 0 or start_ms >= duration:
+                continue
+            x = area.left() + area.width() * (start_ms / duration)
+            painter.drawLine(
+                int(x),
+                int(area.top()),
+                int(x),
+                int(area.bottom()),
+            )
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -265,6 +295,8 @@ class TimelineWidget(QWidget):
             if index == self._selected_index:
                 painter.setPen(QPen(QColor("#D8B4FE"), 2))
                 painter.drawRect(rect)
+
+        self._paint_multisource_cuts(painter, area, duration)
 
         if self._waveform:
             center_y = area.center().y()
