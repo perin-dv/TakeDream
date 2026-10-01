@@ -113,11 +113,6 @@ def build_story_candidate_plan(
     )
     preferred_asset_limit = per_asset_limit(deliverable_type)
 
-    asset_order = {
-        asset.get("id"): index
-        for index, asset in enumerate(assets)
-    }
-
     grouped = {name: [] for name in STORY_ORDER}
     unclassified = []
     for candidate in candidates:
@@ -139,6 +134,7 @@ def build_story_candidate_plan(
     selected = []
     selected_keys = set()
     estimated_total = 0
+    selection_counter = 0
     section_stats = {
         name: {
             "key": name,
@@ -169,7 +165,7 @@ def build_story_candidate_plan(
         return True
 
     def append_candidate(candidate, section=None):
-        nonlocal estimated_total
+        nonlocal estimated_total, selection_counter
         copy = dict(candidate)
         copy["story_section"] = (
             section
@@ -177,6 +173,11 @@ def build_story_candidate_plan(
             or copy.get("semantic_story_section")
             or "nao_classificado"
         )
+        # Guarda a ordem em que o Best Shot Selector escolheu o take. Essa
+        # sequência já intercala câmeras/mídias e não deve ser destruída por
+        # uma ordenação posterior por asset_id.
+        copy["_selection_order"] = selection_counter
+        selection_counter += 1
         selected.append(copy)
         selected_keys.add(_candidate_key(copy))
         estimate = _duration_ms(copy, base_clip_ms)
@@ -256,14 +257,18 @@ def build_story_candidate_plan(
                 continue
             append_candidate(candidate)
 
+    # A narrativa continua agrupada por capítulo, porém dentro de cada
+    # capítulo preservamos a sequência diversificada escolhida pelo seletor.
+    # Ordenar por asset_id aqui fazia A,A,A,B,B,C e anulava a diversidade.
     order = {name: index for index, name in enumerate(STORY_ORDER)}
     selected.sort(
         key=lambda item: (
             order.get(item.get("story_section"), len(STORY_ORDER)),
-            asset_order.get(item.get("asset_id"), 999999),
-            int(item.get("start_ms", 0) or 0),
+            int(item.get("_selection_order", 0)),
         )
     )
+    for item in selected:
+        item.pop("_selection_order", None)
 
     classified = [
         item for item in candidates
