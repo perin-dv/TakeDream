@@ -353,18 +353,22 @@ QSlider::handle:horizontal {
 
 QProgressBar {
     border: 1px solid #2A345C;
-    border-radius: 5px;
+    border-radius: 8px;
     background: #11182D;
-    height: 8px;
+    min-height: 20px;
+    max-height: 20px;
     text-align: center;
-    color: transparent;
+    color: #FFFFFF;
+    font-weight: 800;
+    font-size: 11px;
 }
 
 QProgressBar::chunk {
-    border-radius: 4px;
+    border-radius: 7px;
     background: qlineargradient(
         x1:0, y1:0, x2:1, y2:0,
         stop:0 #7C3AED,
+        stop:0.55 #A855F7,
         stop:1 #D946EF
     );
 }
