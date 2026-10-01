@@ -30,11 +30,11 @@ REFERENCE_TIMING_PATH = "decisions/reference_timing.json"
 
 def _max_clips(deliverable_type):
     return {
-        "teaser": 50,
-        "trailer": 110,
-        "film": 180,
-        "custom": 140,
-    }.get(deliverable_type, 110)
+        "teaser": 60,
+        "trailer": 140,
+        "film": 260,
+        "custom": 180,
+    }.get(deliverable_type, 140)
 
 
 def _base_clip_ms(deliverable):
@@ -62,6 +62,9 @@ def _window(candidate, wanted_ms):
         "path": candidate.get("path"),
         "category_hint": candidate.get("category_hint") or "nao_classificado",
         "story_section": candidate.get("story_section") or "nao_classificado",
+        "semantic_story_section": candidate.get("semantic_story_section"),
+        "semantic_confidence": candidate.get("semantic_confidence", 0.0),
+        "semantic_evidence": list(candidate.get("semantic_evidence") or []),
         "scene_id": candidate.get("scene_id"),
         "source_start_ms": int(candidate.get("start_ms", 0) or 0),
         "source_end_ms": int(candidate.get("end_ms", 0) or 0),
@@ -94,6 +97,15 @@ def _reference_durations(reference_timing):
         if duration >= 500:
             values.append(duration)
     return values
+
+
+def _reference_wanted_ms(timing_durations, index, fallback_ms):
+    if not timing_durations:
+        return fallback_ms
+    # A referência descreve um padrão de ritmo. Se o material novo precisar de
+    # mais takes para atingir a duração alvo, o padrão continua em ciclo em vez
+    # de limitar a montagem ao número de cenas da referência.
+    return timing_durations[index % len(timing_durations)]
 
 
 def _fallback_candidates(library):
@@ -183,6 +195,40 @@ def _story_section_summary(story, final_clips):
     return stats
 
 
+def _apply_source_audio_policy(clips, project):
+    """Mantém uma única trilha musical e abre áudio original só quando útil.
+
+    Com música escolhida pelo usuário, B-roll/cerimônia/festa não carregam o
+    som ambiente por padrão, evitando duas músicas simultâneas. Votos/falas ou
+    um take com evidência real de fala permanecem audíveis e passam a comandar
+    o ducking da trilha. Sem música externa, o áudio original continua normal.
+    """
+    has_music = bool(project.get("music_source_path"))
+    for clip in clips:
+        if not has_music:
+            clip["source_audio_gain"] = 1.0
+            clip["source_audio_role"] = "original"
+            continue
+
+        section = clip.get("story_section") or "nao_classificado"
+        evidence = " ".join(
+            str(item).lower()
+            for item in (clip.get("semantic_evidence") or [])
+        )
+        has_speech_evidence = (
+            "fala/transcrição" in evidence
+            or "fala/transcricao" in evidence
+            or section == "votos_falas"
+        )
+
+        if has_speech_evidence:
+            clip["source_audio_gain"] = 1.0
+            clip["source_audio_role"] = "dialogue"
+        else:
+            clip["source_audio_gain"] = 0.0
+            clip["source_audio_role"] = "music_only"
+
+
 def build_wedding_assembly_plan(project, library, batch_summary, reference_timing=None):
     deliverable = project.get("deliverable")
     if not isinstance(deliverable, dict):
@@ -202,14 +248,18 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
     if not candidates:
         raise ProcessingError("Não há takes utilizáveis para montar o casamento.")
 
-    # Quando existe referência, o número de takes necessário depende do ritmo
-    # aprendido. O Story Builder usa a duração média da referência como unidade
-    # de orçamento para não selecionar poucos takes e encurtar o trailer.
+    # A referência orienta o ritmo, mas não pode fazer o Story Builder acreditar
+    # que poucos takes longos bastam. Limitamos a unidade de orçamento para que
+    # existam candidatos suficientes caso as cenas reais sejam mais curtas.
     selection_clip_ms = base_clip_ms
     if timing_durations:
-        selection_clip_ms = max(
+        reference_average = max(
             500,
             int(round(sum(timing_durations) / len(timing_durations))),
+        )
+        selection_clip_ms = min(
+            reference_average,
+            max(base_clip_ms, int(base_clip_ms * 1.35)),
         )
 
     story = build_story_candidate_plan(
@@ -220,16 +270,14 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
         base_clip_ms=selection_clip_ms,
         max_clips=max_clips,
     )
-    selected_candidates = story.get("selected_candidates", [])
-    if timing_durations:
-        selected_candidates = selected_candidates[: min(max_clips, len(timing_durations))]
+    selected_candidates = story.get("selected_candidates", [])[:max_clips]
 
     selected = []
     for index, candidate in enumerate(selected_candidates):
-        wanted = (
-            timing_durations[index]
-            if index < len(timing_durations)
-            else base_clip_ms
+        wanted = _reference_wanted_ms(
+            timing_durations,
+            index,
+            base_clip_ms,
         )
         duration = int(candidate.get("duration_ms", 0) or 0)
         clip = _window(candidate, min(wanted, duration))
@@ -241,10 +289,10 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
 
     accumulated = sum(int(clip["duration_ms"]) for clip in selected)
 
-    # Sem referência, expande takes já escolhidos quando o lote possui poucas
-    # cenas. Isso mantém o comportamento correto para 8 B-rolls longos, por
-    # exemplo, sem voltar a gerar um vídeo de poucos segundos.
-    if accumulated < target_ms and not timing_durations:
+    # Se o padrão da referência pedir takes mais longos do que as cenas novas
+    # permitem, aproveita o restante disponível dos takes já escolhidos. Isso
+    # impede que um trailer de 3m30 volte a virar apenas ~27s.
+    if accumulated < target_ms:
         remaining = target_ms - accumulated
         for clip in selected:
             available_extra = max(0, clip["source_duration_ms"] - clip["duration_ms"])
@@ -285,6 +333,8 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
     if not final_clips:
         raise ProcessingError("A seleção automática não encontrou takes suficientes.")
 
+    _apply_source_audio_policy(final_clips, project)
+
     settings = project.get("review_settings") if isinstance(project.get("review_settings"), dict) else {}
     if settings.get("auto_zoom"):
         preset = get_style_preset(project.get("style", "Highlight"))
@@ -297,12 +347,13 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
                 next_zoom_ms = clip["timeline_start_ms"] + zoom_gap_ms
 
     return {
-        "schema_version": "0.3",
+        "schema_version": "0.4",
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
         "deliverable": deliverable,
         "target_duration_ms": target_ms,
         "estimated_duration_ms": timeline_ms,
+        "duration_shortfall_ms": max(0, target_ms - timeline_ms),
         "media_count": len({clip.get("asset_id") for clip in final_clips}),
         "clip_count": len(final_clips),
         "story_builder": story.get("engine", "wedding-story-builder-v1"),
@@ -320,6 +371,12 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
         "music_snap_enabled": bool(
             isinstance(reference_timing, dict)
             and reference_timing.get("music_snap_enabled")
+        ),
+        "reference_audio_used": False,
+        "source_audio_policy": (
+            "dialogue_only_with_music"
+            if project.get("music_source_path")
+            else "original_audio"
         ),
         "clips": final_clips,
     }
@@ -371,7 +428,7 @@ class WeddingAssemblyPipeline:
         music_source = project.get("music_source_path")
 
         if reference_video:
-            stage("Aprendendo o DNA do casamento de referência...")
+            stage("Aprendendo o DNA do casamento de referência (sem usar o áudio dele)...")
             result = ReferenceAnalysisPipeline(
                 manager=self.manager,
                 tools=self.tools,
@@ -385,7 +442,7 @@ class WeddingAssemblyPipeline:
             reference_style = result.get("reference_style")
 
         if music_source:
-            stage("Analisando a nova música e seus pontos fortes...")
+            stage("Analisando a trilha escolhida e seus pontos fortes...")
             result = MusicAnalysisPipeline(
                 manager=self.manager,
                 tools=self.tools,
@@ -469,6 +526,8 @@ class WeddingAssemblyPipeline:
             wedding_assembly_duration_ms=duration_ms,
             wedding_story_builder=plan["story_builder"],
             wedding_story_sections=plan["story_sections"],
+            wedding_source_audio_policy=plan["source_audio_policy"],
+            reference_audio_used=False,
             reference_timing_path=(REFERENCE_TIMING_PATH if reference_timing else None),
             reference_timing_applied=plan["reference_timing_applied"],
             music_snap_enabled=plan["music_snap_enabled"],
@@ -482,10 +541,17 @@ class WeddingAssemblyPipeline:
         )
 
         progress(100)
-        stage(
-            f"História do casamento pronta: {plan['clip_count']} takes, "
-            f"{duration_ms / 1000:.1f}s."
-        )
+        shortfall = int(plan.get("duration_shortfall_ms", 0) or 0)
+        if shortfall > 1500:
+            stage(
+                f"História pronta com {plan['clip_count']} takes. "
+                f"Faltaram {shortfall / 1000:.1f}s de material utilizável para a duração alvo."
+            )
+        else:
+            stage(
+                f"História do casamento pronta: {plan['clip_count']} takes, "
+                f"{duration_ms / 1000:.1f}s."
+            )
         return {
             "audio_path": None,
             "transcript": None,
