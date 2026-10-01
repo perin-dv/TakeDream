@@ -11,6 +11,11 @@ from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
 from core.reference_pipeline import ReferenceAnalysisPipeline
 from core.storage import read_json, write_json
+from core.wedding_story import (
+    STORY_LABELS,
+    STORY_ORDER,
+    build_story_candidate_plan,
+)
 from editor.edit_plan import build_edit_plan
 from editor.reference_mapping import map_reference_timing
 from media.ffmpeg_tools import FFmpegTools
@@ -21,19 +26,6 @@ from renderer.multisource_renderer import MultiSourceRenderer
 WEDDING_ASSEMBLY_PLAN_PATH = "decisions/wedding_assembly_plan.json"
 WEDDING_ASSEMBLY_OUTPUT = "output/wedding_assembly_base.mp4"
 REFERENCE_TIMING_PATH = "decisions/reference_timing.json"
-
-
-_CATEGORY_ORDER = {
-    "decoracao": 0,
-    "drone": 1,
-    "making_of_noiva": 2,
-    "making_of_noivo": 3,
-    "cerimonia": 4,
-    "casal": 5,
-    "recepcao": 6,
-    "festa": 7,
-    "nao_classificado": 8,
-}
 
 
 def _max_clips(deliverable_type):
@@ -49,15 +41,6 @@ def _base_clip_ms(deliverable):
     average = float(deliverable.get("average_shot_seconds", 2.8) or 2.8)
     multiplier = 1.8 if deliverable.get("preserve_long_form") else 1.6
     return max(1200, int(round(average * multiplier * 1000)))
-
-
-def _candidate_key(candidate):
-    return (
-        str(candidate.get("asset_id", "")),
-        int(candidate.get("scene_id", -1) or -1),
-        int(candidate.get("start_ms", 0) or 0),
-        int(candidate.get("end_ms", 0) or 0),
-    )
 
 
 def _window(candidate, wanted_ms):
@@ -78,6 +61,7 @@ def _window(candidate, wanted_ms):
         "filename": candidate.get("filename"),
         "path": candidate.get("path"),
         "category_hint": candidate.get("category_hint") or "nao_classificado",
+        "story_section": candidate.get("story_section") or "nao_classificado",
         "scene_id": candidate.get("scene_id"),
         "source_start_ms": int(candidate.get("start_ms", 0) or 0),
         "source_end_ms": int(candidate.get("end_ms", 0) or 0),
@@ -98,6 +82,7 @@ def _reference_durations(reference_timing):
     shots = reference_timing.get("shots")
     if not isinstance(shots, list):
         return []
+
     values = []
     for shot in shots:
         if not isinstance(shot, dict):
@@ -111,19 +96,91 @@ def _reference_durations(reference_timing):
     return values
 
 
-def _retime_clip(clip, wanted_ms):
-    clip = dict(clip)
-    source_start = int(clip.get("source_start_ms", clip.get("start_ms", 0)) or 0)
-    source_end = int(clip.get("source_end_ms", clip.get("end_ms", source_start)) or source_start)
-    available = max(0, source_end - source_start)
-    if available <= 0:
-        return clip
-    wanted = max(500, min(int(wanted_ms), available))
-    offset = max(0, int((available - wanted) / 2))
-    clip["start_ms"] = source_start + offset
-    clip["end_ms"] = clip["start_ms"] + wanted
-    clip["duration_ms"] = wanted
-    return clip
+def _fallback_candidates(library):
+    candidates = []
+    for asset in library.get("assets", []):
+        seconds = asset.get("duration_seconds")
+        if not isinstance(seconds, (int, float)) or seconds <= 0:
+            continue
+        duration_ms = int(round(seconds * 1000))
+        candidates.append(
+            {
+                "asset_id": asset.get("id"),
+                "filename": asset.get("filename"),
+                "path": asset.get("path"),
+                "category_hint": asset.get("category_hint"),
+                "audio_present": asset.get("audio_present"),
+                "scene_id": 0,
+                "start_ms": 0,
+                "end_ms": duration_ms,
+                "duration_ms": duration_ms,
+                "score": float(asset.get("quality_average") or 60.0),
+                "quality_label": "fallback",
+            }
+        )
+    return candidates
+
+
+def _valid_candidates(batch_summary, library):
+    raw = batch_summary.get("best_take_candidates", []) if isinstance(batch_summary, dict) else []
+    candidates = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        start = item.get("start_ms")
+        end = item.get("end_ms")
+        if not path or type(start) is not int or type(end) is not int or end - start < 500:
+            continue
+        candidates.append(dict(item))
+
+    return candidates or _fallback_candidates(library)
+
+
+def _story_section_summary(story, final_clips):
+    stats = []
+    source_stats = {
+        item.get("key"): dict(item)
+        for item in story.get("section_stats", [])
+        if isinstance(item, dict) and item.get("key")
+    }
+
+    actual = {}
+    counts = {}
+    for clip in final_clips:
+        section = clip.get("story_section") or "nao_classificado"
+        actual[section] = actual.get(section, 0) + int(clip.get("duration_ms", 0) or 0)
+        counts[section] = counts.get(section, 0) + 1
+
+    for section in STORY_ORDER:
+        item = source_stats.get(
+            section,
+            {
+                "key": section,
+                "label": STORY_LABELS.get(section, section),
+                "budget_ms": 0,
+                "candidate_count": 0,
+                "selected_count": 0,
+            },
+        )
+        item["actual_ms"] = actual.get(section, 0)
+        item["clip_count"] = counts.get(section, 0)
+        stats.append(item)
+
+    if actual.get("nao_classificado", 0) > 0:
+        stats.append(
+            {
+                "key": "nao_classificado",
+                "label": STORY_LABELS["nao_classificado"],
+                "budget_ms": 0,
+                "estimated_ms": 0,
+                "candidate_count": story.get("unclassified_candidates", 0),
+                "selected_count": counts.get("nao_classificado", 0),
+                "actual_ms": actual.get("nao_classificado", 0),
+                "clip_count": counts.get("nao_classificado", 0),
+            }
+        )
+    return stats
 
 
 def build_wedding_assembly_plan(project, library, batch_summary, reference_timing=None):
@@ -140,103 +197,53 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
     base_clip_ms = _base_clip_ms(deliverable)
     max_clips = _max_clips(deliverable_type)
     timing_durations = _reference_durations(reference_timing)
-    desired_clip_count = min(max_clips, len(timing_durations)) if timing_durations else None
 
-    raw_candidates = batch_summary.get("best_take_candidates", [])
-    candidates = []
-    for item in raw_candidates:
-        if not isinstance(item, dict):
-            continue
-        path = item.get("path")
-        start = item.get("start_ms")
-        end = item.get("end_ms")
-        if not path or type(start) is not int or type(end) is not int or end - start < 500:
-            continue
-        candidates.append(dict(item))
-
-    if not candidates:
-        for asset in library.get("assets", []):
-            seconds = asset.get("duration_seconds")
-            if not isinstance(seconds, (int, float)) or seconds <= 0:
-                continue
-            candidates.append(
-                {
-                    "asset_id": asset.get("id"),
-                    "filename": asset.get("filename"),
-                    "path": asset.get("path"),
-                    "category_hint": asset.get("category_hint"),
-                    "audio_present": asset.get("audio_present"),
-                    "scene_id": 0,
-                    "start_ms": 0,
-                    "end_ms": int(round(seconds * 1000)),
-                    "duration_ms": int(round(seconds * 1000)),
-                    "score": float(asset.get("quality_average") or 60.0),
-                    "quality_label": "fallback",
-                }
-            )
-
+    candidates = _valid_candidates(batch_summary, library)
     if not candidates:
         raise ProcessingError("Não há takes utilizáveis para montar o casamento.")
 
-    asset_order = {
-        asset.get("id"): index
-        for index, asset in enumerate(library.get("assets", []))
-    }
-    ranked = sorted(
+    # Quando existe referência, o número de takes necessário depende do ritmo
+    # aprendido. O Story Builder usa a duração média da referência como unidade
+    # de orçamento para não selecionar poucos takes e encurtar o trailer.
+    selection_clip_ms = base_clip_ms
+    if timing_durations:
+        selection_clip_ms = max(
+            500,
+            int(round(sum(timing_durations) / len(timing_durations))),
+        )
+
+    story = build_story_candidate_plan(
         candidates,
-        key=lambda item: (
-            float(item.get("score", 0) or 0),
-            int(item.get("duration_ms", 0) or 0),
-        ),
-        reverse=True,
+        library.get("assets", []),
+        deliverable,
+        target_ms=target_ms,
+        base_clip_ms=selection_clip_ms,
+        max_clips=max_clips,
     )
+    selected_candidates = story.get("selected_candidates", [])
+    if timing_durations:
+        selected_candidates = selected_candidates[: min(max_clips, len(timing_durations))]
 
     selected = []
-    selected_keys = set()
-    accumulated = 0
-
-    def next_wanted():
-        if timing_durations and len(selected) < len(timing_durations):
-            return timing_durations[len(selected)]
-        return base_clip_ms
-
-    def done():
-        if len(selected) >= max_clips:
-            return True
-        if desired_clip_count is not None:
-            return len(selected) >= desired_clip_count
-        return accumulated >= target_ms
-
-    # Garante variedade de câmera/mídia antes de completar pelos melhores scores.
-    for asset in library.get("assets", []):
-        asset_id = asset.get("id")
-        best = next((item for item in ranked if item.get("asset_id") == asset_id), None)
-        if best is None:
-            continue
-        clip = _window(best, min(next_wanted(), int(best.get("duration_ms", 0) or 0)))
-        if clip is None:
-            continue
-        selected.append(clip)
-        selected_keys.add(_candidate_key(best))
-        accumulated += clip["duration_ms"]
-        if done():
-            break
-
-    if not done():
-        for candidate in ranked:
-            key = _candidate_key(candidate)
-            if key in selected_keys:
-                continue
-            duration = int(candidate.get("duration_ms", 0) or 0)
-            clip = _window(candidate, min(next_wanted(), duration))
-            if clip is None:
-                continue
+    for index, candidate in enumerate(selected_candidates):
+        wanted = (
+            timing_durations[index]
+            if index < len(timing_durations)
+            else base_clip_ms
+        )
+        duration = int(candidate.get("duration_ms", 0) or 0)
+        clip = _window(candidate, min(wanted, duration))
+        if clip is not None:
             selected.append(clip)
-            selected_keys.add(key)
-            accumulated += clip["duration_ms"]
-            if done():
-                break
 
+    if not selected:
+        raise ProcessingError("O Wedding Story Builder não encontrou takes suficientes.")
+
+    accumulated = sum(int(clip["duration_ms"]) for clip in selected)
+
+    # Sem referência, expande takes já escolhidos quando o lote possui poucas
+    # cenas. Isso mantém o comportamento correto para 8 B-rolls longos, por
+    # exemplo, sem voltar a gerar um vídeo de poucos segundos.
     if accumulated < target_ms and not timing_durations:
         remaining = target_ms - accumulated
         for clip in selected:
@@ -257,25 +264,6 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
             if remaining <= 0:
                 break
 
-    selected.sort(
-        key=lambda clip: (
-            _CATEGORY_ORDER.get(clip.get("category_hint"), 8),
-            asset_order.get(clip.get("asset_id"), 999999),
-            clip.get("source_start_ms", 0),
-        )
-    )
-
-    # Reaplica a sequência temporal aprendida da referência depois de organizar
-    # os takes narrativamente. Assim o conteúdo muda, mas o ritmo permanece.
-    if timing_durations:
-        retimed = []
-        for index, clip in enumerate(selected):
-            if index >= len(timing_durations):
-                break
-            retimed.append(_retime_clip(clip, timing_durations[index]))
-        if retimed:
-            selected = retimed
-
     timeline_ms = 0
     final_clips = []
     for clip in selected:
@@ -288,6 +276,7 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
             clip["end_ms"] = clip["start_ms"] + remaining
         elif remaining < 500:
             break
+
         clip["timeline_start_ms"] = timeline_ms
         timeline_ms += clip["duration_ms"]
         clip["timeline_end_ms"] = timeline_ms
@@ -308,7 +297,7 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
                 next_zoom_ms = clip["timeline_start_ms"] + zoom_gap_ms
 
     return {
-        "schema_version": "0.2",
+        "schema_version": "0.3",
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
         "deliverable": deliverable,
@@ -316,6 +305,12 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
         "estimated_duration_ms": timeline_ms,
         "media_count": len({clip.get("asset_id") for clip in final_clips}),
         "clip_count": len(final_clips),
+        "story_builder": story.get("engine", "wedding-story-builder-v1"),
+        "story_builder_applied": True,
+        "story_order": story.get("story_order", list(STORY_ORDER)),
+        "story_sections": _story_section_summary(story, final_clips),
+        "classified_candidates": story.get("classified_candidates", 0),
+        "unclassified_candidates": story.get("unclassified_candidates", 0),
         "reference_timing_applied": bool(timing_durations),
         "reference_rhythm": (
             reference_timing.get("reference_rhythm")
@@ -421,7 +416,7 @@ class WeddingAssemblyPipeline:
             write_json(root / REFERENCE_TIMING_PATH, reference_timing)
 
         check_cancelled(cancel)
-        stage("Escolhendo os melhores takes para a duração desejada...")
+        stage("Construindo a história do casamento por capítulos...")
         progress(45)
         library = load_media_library(root) or library
         plan = build_wedding_assembly_plan(
@@ -437,7 +432,8 @@ class WeddingAssemblyPipeline:
         destination.unlink(missing_ok=True)
 
         stage(
-            f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias..."
+            f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias "
+            "na narrativa escolhida..."
         )
         rendered = self.renderer.render(
             plan["clips"],
@@ -471,6 +467,8 @@ class WeddingAssemblyPipeline:
             wedding_assembly_clip_count=plan["clip_count"],
             wedding_assembly_media_count=plan["media_count"],
             wedding_assembly_duration_ms=duration_ms,
+            wedding_story_builder=plan["story_builder"],
+            wedding_story_sections=plan["story_sections"],
             reference_timing_path=(REFERENCE_TIMING_PATH if reference_timing else None),
             reference_timing_applied=plan["reference_timing_applied"],
             music_snap_enabled=plan["music_snap_enabled"],
@@ -485,7 +483,7 @@ class WeddingAssemblyPipeline:
 
         progress(100)
         stage(
-            f"Rough cut de casamento pronto: {plan['clip_count']} takes, "
+            f"História do casamento pronta: {plan['clip_count']} takes, "
             f"{duration_ms / 1000:.1f}s."
         )
         return {
