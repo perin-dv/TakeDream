@@ -23,6 +23,14 @@ def _even(value):
     return value if value % 2 == 0 else value - 1
 
 
+def _source_audio_gain(clip):
+    try:
+        gain = float(clip.get("source_audio_gain", 1.0))
+    except (TypeError, ValueError):
+        gain = 1.0
+    return max(0.0, min(gain, 1.5))
+
+
 class MultiSourceRenderer:
     """Render a timeline whose clips may come from different source files."""
 
@@ -88,13 +96,18 @@ class MultiSourceRenderer:
             filters.append(f"[{index}:v:0]" + ",".join(video_filters) + f"[v{index}]")
 
             duration_s = max(0.05, int(clip["duration_ms"]) / 1000)
-            if audio_presence[index]:
+            gain = _source_audio_gain(clip)
+            if audio_presence[index] and gain > 0.001:
                 filters.append(
                     f"[{index}:a:0]aresample=48000,"
                     "aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                    f"atrim=duration={duration_s:.6f},asetpts=PTS-STARTPTS[a{index}]"
+                    f"atrim=duration={duration_s:.6f},asetpts=PTS-STARTPTS,"
+                    f"volume={gain:.3f}[a{index}]"
                 )
             else:
+                # Quando existe trilha escolhida, clips de B-roll normalmente
+                # chegam com source_audio_gain=0. Usar silêncio real aqui evita
+                # misturar a música gravada no evento com a nova trilha.
                 filters.append(
                     f"anullsrc=r=48000:cl=stereo:d={duration_s:.6f}[a{index}]"
                 )
@@ -120,27 +133,27 @@ class MultiSourceRenderer:
 
             if music_ducking:
                 filters.append(
-                    f"[{base_audio}]volume=0.78,asplit=2[sourcea][duckkey]"
+                    f"[{base_audio}]volume=0.90,asplit=2[sourcea][duckkey]"
                 )
                 filters.append(
                     f"[{music_index}:a:0]aresample=48000,"
                     "aformat=sample_fmts=fltp:channel_layouts=stereo,"
                     f"atrim=duration={total_seconds:.6f},asetpts=PTS-STARTPTS,"
-                    f"volume=0.34,afade=t=out:st={fade_start:.6f}:d=1.5[musicraw]"
+                    f"volume=0.40,afade=t=out:st={fade_start:.6f}:d=1.5[musicraw]"
                 )
                 filters.append(
                     "[musicraw][duckkey]sidechaincompress="
-                    "threshold=0.025:ratio=7:attack=25:release=450[musica]"
+                    "threshold=0.018:ratio=10:attack=18:release=520[musica]"
                 )
             else:
                 filters.append(
-                    f"[{base_audio}]volume=0.68[sourcea]"
+                    f"[{base_audio}]volume=0.82[sourcea]"
                 )
                 filters.append(
                     f"[{music_index}:a:0]aresample=48000,"
                     "aformat=sample_fmts=fltp:channel_layouts=stereo,"
                     f"atrim=duration={total_seconds:.6f},asetpts=PTS-STARTPTS,"
-                    f"volume=0.30,afade=t=out:st={fade_start:.6f}:d=1.5[musica]"
+                    f"volume=0.34,afade=t=out:st={fade_start:.6f}:d=1.5[musica]"
                 )
 
             filters.append(
