@@ -42,7 +42,6 @@ def score_visual_sample(*, yavg=None, blur=None, duration_ms=1000):
     if yavg is None:
         exposure_score = 65.0
     else:
-        # Limited-range luma is usually pleasant around the middle of the range.
         exposure_score = max(0.0, 100.0 - abs(float(yavg) - 110.0) * 1.15)
 
     if blur is None:
@@ -115,20 +114,30 @@ class VisualAnalyzer:
         if not source.exists():
             raise ProcessingError("O vídeo não foi encontrado para análise visual.")
 
-        stage("Detectando mudanças de cena...")
+        stage("Detectando mudanças de cena... 0%")
         progress(5)
+
+        last_scene_percent = {-1}
+
+        def scene_progress(value):
+            value = max(0, min(100, int(value)))
+            progress(5 + int(value * 0.55))
+            bucket = int(value / 2) * 2
+            if bucket not in last_scene_percent:
+                last_scene_percent.clear()
+                last_scene_percent.add(bucket)
+                stage(f"Detectando mudanças de cena... {value}%")
+
         cuts = self.detect_scene_changes(
             source,
             duration_ms,
             threshold=scene_threshold,
             cancel=cancel,
-            progress=lambda value: progress(
-                5 + int(max(0, min(100, value)) * 0.55)
-            ),
+            progress=scene_progress,
         )
         scenes = build_scene_ranges(cuts, duration_ms)
 
-        stage("Avaliando qualidade dos takes...")
+        stage("Avaliando qualidade dos takes... 0%")
         progress(60)
         sample_indices = _sample_indices(len(scenes), max_quality_samples)
         sampled_indices = set(sample_indices)
@@ -151,12 +160,13 @@ class VisualAnalyzer:
             metrics["sampled"] = True
             scene["quality"] = metrics
             sampled += 1
-            progress(60 + int((position + 1) * 35 / max(1, len(sample_indices))))
+            quality_percent = int((position + 1) * 100 / max(1, len(sample_indices)))
+            progress(60 + int(quality_percent * 0.35))
+            stage(
+                f"Avaliando qualidade dos takes... {quality_percent}% "
+                f"({position + 1}/{len(sample_indices)})"
+            )
 
-        # Em bibliotecas grandes não compensa iniciar um processo FFmpeg para
-        # cada cena. As cenas não amostradas recebem uma nota técnica neutra,
-        # baseada na duração, para continuarem elegíveis no primeiro ranking.
-        # O Best Shot Selector poderá aprofundar só os finalistas depois.
         for index, scene in enumerate(scenes):
             if index in sampled_indices:
                 continue
@@ -178,7 +188,7 @@ class VisualAnalyzer:
         )
 
         progress(100)
-        stage("Análise visual concluída.")
+        stage("Análise visual concluída • 100%")
         return {
             "schema_version": "0.1",
             "scene_threshold": float(scene_threshold),
@@ -201,9 +211,6 @@ class VisualAnalyzer:
         cancel=None,
         progress=lambda value: None,
     ):
-        # A detecção não precisa trabalhar na resolução original. Reduzir o
-        # quadro antes do filtro de cena mantém os timestamps e diminui bastante
-        # o custo em material 4K/6K.
         filter_expr = (
             "scale=320:-2:flags=fast_bilinear,"
             f"select=gt(scene\\,{float(threshold):.3f}),showinfo"
