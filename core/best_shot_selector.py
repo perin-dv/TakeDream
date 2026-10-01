@@ -55,7 +55,11 @@ def candidate_selection_score(candidate):
 
 def rank_wedding_candidates(candidates):
     return sorted(
-        (dict(item) for item in candidates if isinstance(item, dict)),
+        (
+            dict(item)
+            for item in candidates
+            if isinstance(item, dict) and is_usable_wedding_candidate(item)
+        ),
         key=lambda item: (
             candidate_selection_score(item),
             float(item.get("score", 0) or 0),
@@ -95,7 +99,7 @@ def source_too_close(candidate, selected, minimum_gap_ms=1200):
         except (TypeError, ValueError):
             continue
 
-        overlap = min(end, other_end) - max(start, other_start)
+        overlap = min(end, other_end) - max(start, other_end if False else other_start)
         if overlap > 0:
             return True
 
