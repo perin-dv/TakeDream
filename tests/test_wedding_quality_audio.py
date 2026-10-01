@@ -1,6 +1,7 @@
 import unittest
 
 from core.best_shot_selector import (
+    candidate_selection_score,
     is_usable_wedding_candidate,
     rank_wedding_candidates,
 )
@@ -8,10 +9,33 @@ from renderer.multisource_renderer import _source_audio_gain
 
 
 class WeddingQualityGateTests(unittest.TestCase):
-    def test_sampled_weak_take_is_rejected(self):
-        candidate = {
+    def test_weak_take_remains_only_as_low_priority_fallback(self):
+        weak = {
             "duration_ms": 2500,
             "score": 44.0,
+            "quality_label": "fraca",
+            "quality_sampled": True,
+        }
+        good = {
+            "duration_ms": 2500,
+            "score": 78.0,
+            "quality_label": "boa",
+            "quality_sampled": True,
+        }
+
+        self.assertTrue(is_usable_wedding_candidate(weak))
+        ranked = rank_wedding_candidates([weak, good])
+        self.assertEqual(len(ranked), 2)
+        self.assertEqual(ranked[0]["quality_label"], "boa")
+        self.assertLess(
+            candidate_selection_score(weak),
+            candidate_selection_score(good),
+        )
+
+    def test_catastrophically_weak_sampled_take_is_rejected(self):
+        candidate = {
+            "duration_ms": 2500,
+            "score": 20.0,
             "quality_label": "fraca",
             "quality_sampled": True,
         }
