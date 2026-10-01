@@ -43,6 +43,14 @@ class ProcessingWorker(QThread):
             return False
         return self._library_media_count(manager, self.project_dir) > 1
 
+    def _mark_parent_for_auto_review(self):
+        # ProjectWindow já abre a revisão automaticamente quando o modo atual é
+        # "edit". Aqui apenas sincronizamos esse estado antes de emitir o
+        # resultado do fluxo automático. Nenhum widget é manipulado na thread.
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_current_mode"):
+            parent._current_mode = "edit"
+
     def run(self):
         lock = QLockFile(str(self.project_dir / ".processing.lock"))
         lock.setStaleLockTime(0)
@@ -78,6 +86,7 @@ class ProcessingWorker(QThread):
                         progress=self.progress.emit,
                     )
                     result["auto_pipeline"] = True
+                    self._mark_parent_for_auto_review()
                     self.completed.emit(result)
                 else:
                     results = load_results(self.project_dir, self.cancel)
