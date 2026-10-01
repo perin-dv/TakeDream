@@ -28,6 +28,22 @@ def _source_audio_gain(clip):
         gain = float(clip.get("source_audio_gain", 1.0))
     except (TypeError, ValueError):
         gain = 1.0
+
+    section = str(clip.get("story_section") or "nao_classificado")
+    role = str(clip.get("source_audio_role") or "")
+
+    # Quando a montagem tem trilha externa, o WeddingAssembly marca B-roll com
+    # ganho zero. Cerimônia/final, porém, se beneficiam de um pouco de som real
+    # (ambiente, aplauso, reação) mesmo sem transcrição individual. Votos/falas
+    # continuam em primeiro plano e comandam o ducking da música.
+    if gain <= 0.001 and role == "music_only":
+        if section == "cerimonia":
+            gain = 0.42
+        elif section == "finale":
+            gain = 0.38
+        elif section == "recepcao":
+            gain = 0.18
+
     return max(0.0, min(gain, 1.5))
 
 
@@ -105,9 +121,6 @@ class MultiSourceRenderer:
                     f"volume={gain:.3f}[a{index}]"
                 )
             else:
-                # Quando existe trilha escolhida, clips de B-roll normalmente
-                # chegam com source_audio_gain=0. Usar silêncio real aqui evita
-                # misturar a música gravada no evento com a nova trilha.
                 filters.append(
                     f"anullsrc=r=48000:cl=stereo:d={duration_s:.6f}[a{index}]"
                 )
