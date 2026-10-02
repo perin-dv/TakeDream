@@ -13,6 +13,7 @@ from core.storage import read_json, write_json
 from media.ffmpeg_tools import FFmpegTools
 from media.motion_analyzer import MotionAnalyzer
 from media.visual_analyzer import VisualAnalyzer
+from core.visual_semantics import VisualSemanticsPipeline
 
 
 BATCH_VISUAL_ANALYSIS_PATH = "analysis/batch_visual_analysis.json"
@@ -37,11 +38,13 @@ class BatchVisualAnalysisPipeline:
         tools=None,
         analyzer_factory=None,
         motion_analyzer_factory=None,
+        semantic_pipeline_factory=None,
     ):
         self.manager = manager or ProjectManager()
         self.tools = tools or FFmpegTools()
         self.analyzer_factory = analyzer_factory
         self.motion_analyzer_factory = motion_analyzer_factory
+        self.semantic_pipeline_factory = semantic_pipeline_factory
 
     def _analyzer(self):
         if self.analyzer_factory is not None:
@@ -128,8 +131,9 @@ class BatchVisualAnalysisPipeline:
             if fresh["fingerprint"] != asset.get("fingerprint"):
                 asset.update(fresh)
 
-            base = int((index / total) * 100)
-            span = max(1, int(100 / total))
+            visual_budget = 90 if use_motion_gate else 100
+            base = int((index / total) * visual_budget)
+            span = max(1, int(visual_budget / total))
             visual_rel = asset.get("visual_analysis_path")
             visual_path = root / visual_rel if visual_rel else None
 
@@ -196,7 +200,7 @@ class BatchVisualAnalysisPipeline:
                         motion_result=motion_result,
                     )
                     save_media_library(root, library)
-                    progress(int(((index + 1) / total) * 100))
+                    progress(int(((index + 1) / total) * visual_budget))
                     continue
 
             stage(f"Analisando mídia {index + 1}/{total}: {asset_path.name}")
@@ -314,8 +318,16 @@ class BatchVisualAnalysisPipeline:
                 1 for item in assets if item.get("analysis_status") == "complete"
             )
             save_media_library(root, library)
-            progress(int(((index + 1) / total) * 100))
+            progress(int(((index + 1) / total) * visual_budget))
 
+        semantic_analysis = None
+        if use_motion_gate and all_candidates:
+            pipeline = (self.semantic_pipeline_factory() if self.semantic_pipeline_factory
+                        else VisualSemanticsPipeline(manager=self.manager, tools=self.tools))
+            semantic_result = pipeline.run(root, all_candidates, cancel=cancel, stage=stage,
+                                           progress=lambda value: progress(90 + int(value * 0.09)))
+            all_candidates = semantic_result["candidates"]
+            semantic_analysis = semantic_result["analysis"]
         all_candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
         summary = {
             "schema_version": "0.4",
@@ -329,11 +341,14 @@ class BatchVisualAnalysisPipeline:
             "motion_gate_engine": "motion-gate-v1" if use_motion_gate else None,
             "motion_gate_assets": motion_assets,
             "motion_trimmed_scenes": motion_trimmed_scenes,
-            "best_take_candidates": all_candidates[:500],
+            # Keep emotional ending candidates even in libraries with >500 shots.
+            "best_take_candidates": all_candidates if use_motion_gate else all_candidates[:500],
+            "visual_semantics_path": "analysis/visual_semantics.json" if semantic_analysis else None,
         }
         write_json(root / BATCH_VISUAL_ANALYSIS_PATH, summary)
 
-        current_status = project.get("status", "media_analyzed")
+        _, current_project = self.manager.load_project(root)
+        current_status = current_project.get("status", "media_analyzed")
         self.manager.update_processing(
             root,
             current_status,
@@ -380,6 +395,7 @@ class BatchVisualAnalysisPipeline:
                     "score": quality.get("score", 0),
                     "quality_label": quality.get("label"),
                     "quality_sampled": quality.get("sampled"),
+                    "sharpness_score": quality.get("sharpness_score"),
                     "motion_classification": motion.get("classification"),
                     "motion_confidence": motion.get("confidence", 0.0),
                     "motion_median": motion.get("median_motion"),

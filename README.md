@@ -398,3 +398,6 @@ alterar os três arquivos. Não faz parte de `unittest discover`.
 
 Documentação dos motores: [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 e [FFmpeg silencedetect](https://ffmpeg.org/ffmpeg-filters.html#silencedetect).
+
+Visão semântica local de casamento, instalação do modelo de CPU, cache,
+Ending Director e limitações: [guia de visão semântica](docs/semantic-vision.md).

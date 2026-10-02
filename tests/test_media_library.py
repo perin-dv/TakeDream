@@ -150,10 +150,17 @@ class BatchVisualAnalysisTests(unittest.TestCase):
                         },
                     }
 
+            class FakeSemanticPipeline:
+                def run(self, root, candidates, **kwargs):
+                    return {"candidates": candidates, "analysis": {"shots": []}}
+
             pipeline = BatchVisualAnalysisPipeline(
                 manager=manager,
                 tools=FakeTools(),
                 analyzer_factory=lambda: FakeAnalyzer(),
+                # This cache test uses byte placeholders, not decodable video.
+                # Exercise real semantic persistence separately with an injected model.
+                semantic_pipeline_factory=lambda: FakeSemanticPipeline(),
             )
             first = pipeline.run(project)
             second = pipeline.run(project)

@@ -149,6 +149,15 @@ def analyze_story_semantics(candidate):
             "engine": "wedding-semantics-v1",
         }
 
+    from core.semantic_signals import semantic_section
+    visual_section, visual_confidence = semantic_section(candidate)
+    # Keep explicit speech evidence/category authoritative for the audio policy.
+    speech_hint = " ".join(_plain(candidate.get(key)) for key in ("speech_text", "transcript_text", "transcript", "recognized_text", "text") if candidate.get(key))
+    speech_scores, _ = _matches(speech_hint, SPEECH_KEYWORDS)
+    if visual_section and not speech_scores and candidate.get("category_hint") != "votos_falas":
+        return {"section": visual_section, "confidence": round(visual_confidence, 3),
+                "evidence": ["inferência visual CLIP em frames reais"], "engine": "clip-shot-semantics-v1"}
+
     category = _plain(candidate.get("category_hint"))
     path_text = " ".join(
         _plain(candidate.get(key))

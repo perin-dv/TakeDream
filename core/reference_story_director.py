@@ -7,6 +7,7 @@ from statistics import median
 
 from core.best_shot_selector import candidate_selection_score
 from core.wedding_semantics import STORY_SECTIONS, enrich_story_candidate
+from core.semantic_signals import PHASE_SLOTS, repetition_penalty, slot_score
 
 
 PHASE_DEFINITIONS = (
@@ -360,6 +361,8 @@ def _pick_candidate(
     phase_topic_usage,
     global_topic_usage,
     topic_repeat_limit,
+    semantic_slot=None,
+    selected_semantics=(),
 ):
     available = [item for item in pool if _candidate_key(item) not in used]
     if not available:
@@ -370,6 +373,9 @@ def _pick_candidate(
         topic = _topic_key(item, asset_order)
         asset_id = item.get("asset_id")
         score = candidate_selection_score(item)
+        if item.get("visual_semantics"):
+            score += slot_score(item, semantic_slot) * 75.0
+            score -= repetition_penalty(item, selected_semantics)
         score -= phase_asset_usage.get(asset_id, 0) * 14.0
         score -= phase_topic_usage.get(topic, 0) * 18.0
         score -= global_topic_usage.get(topic, 0) * 5.0
@@ -384,6 +390,10 @@ def _pick_candidate(
 
 
 def _phase_pool(enriched, phase, asset_order):
+    semantic_slot = PHASE_SLOTS.get(phase.get("key"), phase.get("key"))
+    semantic = [item for item in enriched if item.get("visual_semantics") and slot_score(item, semantic_slot) >= 0.25]
+    if semantic:
+        return sorted(semantic, key=lambda item: slot_score(item, semantic_slot), reverse=True)
     allowed = set(phase.get("story_sections") or [])
     preferred = [
         item for item in enriched
@@ -433,6 +443,8 @@ def _decorate_candidate(candidate, phase, asset_order):
     copy["director_audio_intent"] = phase.get("audio_intent")
     copy["director_reference_energy"] = phase.get("reference_energy", 0.0)
     copy["director_topic_key"] = _topic_key(copy, asset_order)
+    if copy.get("visual_semantics"):
+        copy["semantic_slot"] = PHASE_SLOTS.get(phase.get("key"), phase.get("key"))
     return copy
 
 
@@ -470,6 +482,8 @@ def arrange_candidates_by_reference(candidates, assets, director, max_clips):
                 phase_topic_usage=phase_topic_usage,
                 global_topic_usage=global_topic_usage,
                 topic_repeat_limit=topic_repeat_limit,
+                semantic_slot=PHASE_SLOTS.get(phase.get("key"), phase.get("key")),
+                selected_semantics=[item for items in phase_buckets for item in items] + bucket,
             )
             if candidate is None:
                 break
@@ -518,6 +532,8 @@ def arrange_candidates_by_reference(candidates, assets, director, max_clips):
                     phase_topic_usage=phase_topic_usage,
                     global_topic_usage=global_topic_usage,
                     topic_repeat_limit=max(1, int(phase.get("topic_repeat_limit", 2) or 2)),
+                    semantic_slot=PHASE_SLOTS.get(phase.get("key"), phase.get("key")),
+                    selected_semantics=[item for items in phase_buckets for item in items],
                 )
                 if candidate is None:
                     continue

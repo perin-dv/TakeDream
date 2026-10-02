@@ -5,7 +5,10 @@ from core.batch_visual_analysis import (
     BatchVisualAnalysisPipeline,
 )
 from core.deliverables import normalize_deliverable
-from core.media_library import load_media_library
+from core.ending_director import EndingDirector
+from core.visual_semantics import VisualSemanticsPipeline, candidate_key
+from core.semantic_signals import build_semantic_director
+from core.media_library import asset_from_path, load_media_library
 from core.music_pipeline import MusicAnalysisPipeline
 from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
@@ -96,6 +99,9 @@ def _window(candidate, wanted_ms):
         "semantic_story_section": candidate.get("semantic_story_section"),
         "semantic_confidence": candidate.get("semantic_confidence", 0.0),
         "semantic_evidence": list(candidate.get("semantic_evidence") or []),
+        "visual_semantics": candidate.get("visual_semantics"),
+        "semantic_slot": candidate.get("semantic_slot"),
+        "ending_director_selected": candidate.get("ending_director_selected", False),
         "scene_id": candidate.get("scene_id"),
         "raw_source_start_ms": raw_start,
         "raw_source_end_ms": raw_end,
@@ -392,8 +398,26 @@ def build_wedding_assembly_plan(
             reference_story_director,
             max_clips,
         )
+    elif any(item.get("visual_semantics") for item in candidates):
+        selected_candidates = arrange_candidates_by_reference(
+            candidates, library.get("assets", []), build_semantic_director(target_ms), max_clips,
+        )
     else:
         selected_candidates = story.get("selected_candidates", [])[:max_clips]
+
+    ending = EndingDirector().choose(candidates)
+    closing_candidate = ending.get("candidate")
+    closing_clip = None
+    body_target_ms = target_ms
+    if closing_candidate:
+        selected_candidates = [item for item in selected_candidates if candidate_key(item) != candidate_key(closing_candidate)]
+        hold_ms = min(int(ending["hold_ms"]), target_ms)
+        if isinstance(reference_timing, dict):
+            phrases = reference_timing.get("music_phrases") or []
+            if phrases:
+                hold_ms = min(hold_ms, max(1500, int(phrases[-1].get("duration_ms", hold_ms))))
+        closing_clip = _window(closing_candidate, hold_ms)
+        body_target_ms -= closing_clip["duration_ms"]
 
     selected = []
     for index, candidate in enumerate(selected_candidates):
@@ -407,17 +431,17 @@ def build_wedding_assembly_plan(
         if clip is not None:
             selected.append(clip)
 
-    if not selected:
+    if not selected and not closing_clip:
         raise ProcessingError("O Wedding Story Builder não encontrou takes suficientes.")
 
-    _expand_selected_clips(selected, target_ms, director_applied)
+    _expand_selected_clips(selected, body_target_ms, director_applied)
 
     timeline_ms = 0
     final_clips = []
     for clip in selected:
-        if timeline_ms >= target_ms:
+        if timeline_ms >= body_target_ms:
             break
-        remaining = target_ms - timeline_ms
+        remaining = body_target_ms - timeline_ms
         if clip["duration_ms"] > remaining and remaining >= 500:
             clip = dict(clip)
             clip["duration_ms"] = remaining
@@ -428,6 +452,12 @@ def build_wedding_assembly_plan(
         timeline_ms += clip["duration_ms"]
         clip["timeline_end_ms"] = timeline_ms
         final_clips.append(clip)
+
+    if closing_clip:
+        closing_clip["timeline_start_ms"] = timeline_ms
+        timeline_ms += closing_clip["duration_ms"]
+        closing_clip["timeline_end_ms"] = timeline_ms
+        final_clips.append(closing_clip)
 
     if not final_clips:
         raise ProcessingError("A seleção automática não encontrou takes suficientes.")
@@ -456,6 +486,8 @@ def build_wedding_assembly_plan(
 
     return {
         "schema_version": "0.6",
+        "ending_director": {key:value for key,value in ending.items() if key != "candidate"},
+        "visual_semantics_applied": any(clip.get("visual_semantics") for clip in final_clips),
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
         "deliverable": deliverable,
@@ -534,7 +566,12 @@ class WeddingAssemblyPipeline:
             except (OSError, ValueError):
                 batch_summary = None
 
-        if not isinstance(batch_summary, dict):
+        source_changed = any(
+            Path(asset.get("path", "")).is_file()
+            and asset_from_path(asset["path"])["fingerprint"] != asset.get("fingerprint")
+            for asset in library.get("assets", [])
+        )
+        if not isinstance(batch_summary, dict) or source_changed:
             stage("Fazendo análise rápida da biblioteca antes da montagem...")
             batch_summary = BatchVisualAnalysisPipeline(
                 manager=self.manager,
@@ -547,6 +584,13 @@ class WeddingAssemblyPipeline:
             )
 
         check_cancelled(cancel)
+        # Validate cache against current files/model even when batch analysis was
+        # loaded from disk. This also upgrades projects created before vision.
+        semantic_result = VisualSemanticsPipeline(manager=self.manager, tools=self.tools).run(
+            root, _valid_candidates(batch_summary, library), cancel=cancel, stage=stage,
+            progress=lambda value: progress(28 + int(value * 0.04)),
+        )
+        batch_summary = {**batch_summary, "best_take_candidates": semantic_result["candidates"]}
         reference_style = None
         reference_music = None
         music_analysis = None
@@ -563,7 +607,7 @@ class WeddingAssemblyPipeline:
                 reference_video,
                 cancel=cancel,
                 stage=stage,
-                progress=lambda value: progress(28 + int(max(0, min(100, value)) * 0.08)),
+                progress=lambda value: progress(32 + int(max(0, min(100, value)) * 0.06)),
             )
             reference_style = result.get("reference_style")
             reference_music = result.get("reference_music")
@@ -578,7 +622,7 @@ class WeddingAssemblyPipeline:
                 music_source,
                 cancel=cancel,
                 stage=stage,
-                progress=lambda value: progress(36 + int(max(0, min(100, value)) * 0.08)),
+                progress=lambda value: progress(38 + int(max(0, min(100, value)) * 0.06)),
             )
             music_analysis = result.get("music_analysis")
 
