@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication
 from app.ui.icons import app_icon
 from app.ui.theme import APP_STYLESHEET
 from app.ui.top_menu import TakeDreamTopMenu
-from app.windows.main_window import MainWindow
+from app.windows.safe_main_window import SafeMainWindow
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     )
     app.setStyleSheet(APP_STYLESHEET)
 
-    window = MainWindow()
+    window = SafeMainWindow()
     window.top_menu = TakeDreamTopMenu(host=window, parent=window)
     window.top_menu.navigate.connect(window._navigate)
     window.setMenuWidget(window.top_menu)
