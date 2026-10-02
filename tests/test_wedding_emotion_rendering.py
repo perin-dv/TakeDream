@@ -4,6 +4,10 @@ from core.best_shot_selector import (
     candidate_selection_score,
     is_usable_wedding_candidate,
 )
+from core.wedding_dialogue_director import (
+    dialogue_candidate_score,
+    dialogue_text_score,
+)
 from renderer.multisource_renderer import (
     _dialogue_focus_indexes,
     _input_window,
@@ -130,6 +134,53 @@ class DialogueFocusTests(unittest.TestCase):
             "visual_semantics": semantics({"vows": 0.85}),
         }
         self.assertEqual(_dialogue_focus_indexes([clip], [False]), set())
+
+    def test_dialogue_director_prefers_couple_vows_over_officiant(self):
+        couple = {
+            "duration_ms": 4200,
+            "audio_present": True,
+            "story_section": "votos_falas",
+            "director_phase": "vows_couple",
+            "source_audio_role": "dialogue",
+            "visual_semantics": semantics(
+                {"vows": 0.72, "couple_closeup": 0.61, "officiant": 0.04}
+            ),
+        }
+        officiant = {
+            "duration_ms": 4200,
+            "audio_present": True,
+            "story_section": "cerimonia",
+            "source_audio_role": "music_priority",
+            "visual_semantics": semantics(
+                {"vows": 0.30, "officiant": 0.82}
+            ),
+        }
+        self.assertGreater(
+            dialogue_candidate_score(couple),
+            dialogue_candidate_score(officiant),
+        )
+
+    def test_meaningful_vow_phrase_scores_above_officiant_phrase(self):
+        vow = {
+            "start_ms": 0,
+            "end_ms": 4300,
+            "text": "Meu amor, eu prometo estar ao seu lado todos os dias da minha vida.",
+            "words": [
+                {"probability": 0.92},
+                {"probability": 0.95},
+                {"probability": 0.90},
+            ],
+        }
+        officiant = {
+            "start_ms": 0,
+            "end_ms": 4300,
+            "text": "Senhoras e senhores, eu vos declaro marido e mulher.",
+            "words": [
+                {"probability": 0.95},
+                {"probability": 0.94},
+            ],
+        }
+        self.assertGreater(dialogue_text_score(vow), dialogue_text_score(officiant))
 
 
 if __name__ == "__main__":
