@@ -7,7 +7,7 @@ from core.media_library import (
     load_media_library,
     save_media_library,
 )
-from core.processing import ProcessingError, check_cancelled
+from core.processing import ProcessingCancelled, ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
 from core.storage import read_json, write_json
 from media.ffmpeg_tools import FFmpegTools
@@ -176,6 +176,8 @@ class BatchVisualAnalysisPipeline:
                                             )
                                         ),
                                     )
+                                except ProcessingCancelled:
+                                    raise
                                 except Exception as error:
                                     asset["motion_analysis_error"] = str(error)
                                     motion_result = None
@@ -269,6 +271,8 @@ class BatchVisualAnalysisPipeline:
                         motion_trimmed_scenes += int(
                             motion_result.get("trimmed_scene_count", 0) or 0
                         )
+                    except ProcessingCancelled:
+                        raise
                     except Exception as error:
                         # Motion Gate é melhoria de seleção, não pode invalidar
                         # uma análise visual que já terminou corretamente.
@@ -299,6 +303,8 @@ class BatchVisualAnalysisPipeline:
                     result,
                     motion_result=motion_result,
                 )
+            except ProcessingCancelled:
+                raise
             except Exception as error:
                 asset["analysis_status"] = "error"
                 asset["analysis_error"] = str(error)
