@@ -18,6 +18,7 @@ from core.visual_semantics import VisualSemanticsPipeline
 
 BATCH_VISUAL_ANALYSIS_PATH = "analysis/batch_visual_analysis.json"
 MEDIA_ASSET_ANALYSIS_DIR = "analysis/media_assets"
+MOTION_GATE_SCHEMA = "0.2"
 
 
 def _quality_sample_budget(media_count):
@@ -29,6 +30,13 @@ def _quality_sample_budget(media_count):
     if media_count <= 40:
         return 3
     return 2
+
+
+def _valid_motion_cache(value):
+    return (
+        isinstance(value, dict)
+        and str(value.get("schema_version") or "") == MOTION_GATE_SCHEMA
+    )
 
 
 class BatchVisualAnalysisPipeline:
@@ -82,8 +90,12 @@ class BatchVisualAnalysisPipeline:
         write_json(motion_path, motion_result)
         asset["motion_analysis_path"] = str(motion_path.relative_to(root)).replace("\\", "/")
         asset["motion_gate_engine"] = motion_result.get("engine")
+        asset["motion_gate_schema"] = motion_result.get("schema_version")
         asset["motion_trimmed_scenes"] = int(
             motion_result.get("trimmed_scene_count", 0) or 0
+        )
+        asset["motion_internal_whips"] = int(
+            motion_result.get("internal_whip_scene_count", 0) or 0
         )
         asset["motion_analysis_error"] = None
         return motion_result
@@ -111,6 +123,7 @@ class BatchVisualAnalysisPipeline:
         failed = 0
         motion_assets = 0
         motion_trimmed_scenes = 0
+        motion_internal_whips = 0
 
         primary_path = Path(project["source"]["original_path"])
         if not primary_path.is_absolute():
@@ -158,7 +171,11 @@ class BatchVisualAnalysisPipeline:
                             except (OSError, ValueError):
                                 motion_result = None
 
-                        if not isinstance(motion_result, dict):
+                        # Motion Gate 0.2 acrescenta chicote interno. Projetos já
+                        # analisados reutilizam Scene Detection/Quality, mas rodam
+                        # somente a passagem leve de movimento novamente.
+                        if not _valid_motion_cache(motion_result):
+                            motion_result = None
                             seconds = asset.get("duration_seconds")
                             if isinstance(seconds, (int, float)) and seconds > 0:
                                 try:
@@ -186,10 +203,13 @@ class BatchVisualAnalysisPipeline:
                                     asset["motion_analysis_error"] = str(error)
                                     motion_result = None
 
-                        if isinstance(motion_result, dict):
+                        if _valid_motion_cache(motion_result):
                             motion_assets += 1
                             motion_trimmed_scenes += int(
                                 motion_result.get("trimmed_scene_count", 0) or 0
+                            )
+                            motion_internal_whips += int(
+                                motion_result.get("internal_whip_scene_count", 0) or 0
                             )
 
                     reused += 1
@@ -275,6 +295,9 @@ class BatchVisualAnalysisPipeline:
                         motion_trimmed_scenes += int(
                             motion_result.get("trimmed_scene_count", 0) or 0
                         )
+                        motion_internal_whips += int(
+                            motion_result.get("internal_whip_scene_count", 0) or 0
+                        )
                     except ProcessingCancelled:
                         raise
                     except Exception as error:
@@ -322,15 +345,23 @@ class BatchVisualAnalysisPipeline:
 
         semantic_analysis = None
         if use_motion_gate and all_candidates:
-            pipeline = (self.semantic_pipeline_factory() if self.semantic_pipeline_factory
-                        else VisualSemanticsPipeline(manager=self.manager, tools=self.tools))
-            semantic_result = pipeline.run(root, all_candidates, cancel=cancel, stage=stage,
-                                           progress=lambda value: progress(90 + int(value * 0.09)))
+            pipeline = (
+                self.semantic_pipeline_factory()
+                if self.semantic_pipeline_factory
+                else VisualSemanticsPipeline(manager=self.manager, tools=self.tools)
+            )
+            semantic_result = pipeline.run(
+                root,
+                all_candidates,
+                cancel=cancel,
+                stage=stage,
+                progress=lambda value: progress(90 + int(value * 0.09)),
+            )
             all_candidates = semantic_result["candidates"]
             semantic_analysis = semantic_result["analysis"]
         all_candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
         summary = {
-            "schema_version": "0.4",
+            "schema_version": "0.5",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "media_count": total,
             "analyzed_now": analyzed,
@@ -339,8 +370,10 @@ class BatchVisualAnalysisPipeline:
             "quality_samples_per_media": sample_budget,
             "total_scenes": sum(int(item.get("scene_count", 0) or 0) for item in assets),
             "motion_gate_engine": "motion-gate-v1" if use_motion_gate else None,
+            "motion_gate_schema": MOTION_GATE_SCHEMA if use_motion_gate else None,
             "motion_gate_assets": motion_assets,
             "motion_trimmed_scenes": motion_trimmed_scenes,
+            "motion_internal_whips": motion_internal_whips,
             # Keep emotional ending candidates even in libraries with >500 shots.
             "best_take_candidates": all_candidates if use_motion_gate else all_candidates[:500],
             "visual_semantics_path": "analysis/visual_semantics.json" if semantic_analysis else None,
@@ -357,7 +390,9 @@ class BatchVisualAnalysisPipeline:
             batch_visual_analysis_path=BATCH_VISUAL_ANALYSIS_PATH,
             batch_visual_analyzed=library.get("analyzed_count", 0),
             motion_gate_engine=summary.get("motion_gate_engine"),
+            motion_gate_schema=summary.get("motion_gate_schema"),
             motion_trimmed_scenes=motion_trimmed_scenes,
+            motion_internal_whips=motion_internal_whips,
         )
         stage(
             f"Análise em lote concluída: {library.get('analyzed_count', 0)}/{total} mídias prontas."
@@ -404,5 +439,6 @@ class BatchVisualAnalysisPipeline:
                     "motion_safe_end_ms": motion.get("safe_end_ms"),
                     "motion_trim_start_ms": motion.get("trim_start_ms", 0),
                     "motion_trim_end_ms": motion.get("trim_end_ms", 0),
+                    "motion_internal_spike_samples": motion.get("internal_spike_samples", 0),
                 }
             )
