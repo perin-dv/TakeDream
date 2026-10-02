@@ -2,6 +2,7 @@ from pathlib import Path
 
 from core.batch_visual_analysis import (
     BATCH_VISUAL_ANALYSIS_PATH,
+    MOTION_GATE_SCHEMA,
     BatchVisualAnalysisPipeline,
 )
 from core.deliverables import normalize_deliverable
@@ -300,8 +301,6 @@ def _apply_source_audio_policy(clips, project):
             clip["source_audio_role"] = "dialogue"
         else:
             clip["source_audio_gain"] = 0.0
-            # Diferente de music_only: o renderer não abre ambiente de cerimônia
-            # automaticamente. Isso evita baixar a música e entregar silêncio.
             clip["source_audio_role"] = "music_priority"
 
 
@@ -400,7 +399,10 @@ def build_wedding_assembly_plan(
         )
     elif any(item.get("visual_semantics") for item in candidates):
         selected_candidates = arrange_candidates_by_reference(
-            candidates, library.get("assets", []), build_semantic_director(target_ms), max_clips,
+            candidates,
+            library.get("assets", []),
+            build_semantic_director(target_ms),
+            max_clips,
         )
     else:
         selected_candidates = story.get("selected_candidates", [])[:max_clips]
@@ -410,12 +412,19 @@ def build_wedding_assembly_plan(
     closing_clip = None
     body_target_ms = target_ms
     if closing_candidate:
-        selected_candidates = [item for item in selected_candidates if candidate_key(item) != candidate_key(closing_candidate)]
+        selected_candidates = [
+            item
+            for item in selected_candidates
+            if candidate_key(item) != candidate_key(closing_candidate)
+        ]
         hold_ms = min(int(ending["hold_ms"]), target_ms)
         if isinstance(reference_timing, dict):
             phrases = reference_timing.get("music_phrases") or []
             if phrases:
-                hold_ms = min(hold_ms, max(1500, int(phrases[-1].get("duration_ms", hold_ms))))
+                hold_ms = min(
+                    hold_ms,
+                    max(1500, int(phrases[-1].get("duration_ms", hold_ms))),
+                )
         closing_clip = _window(closing_candidate, hold_ms)
         body_target_ms -= closing_clip["duration_ms"]
 
@@ -480,13 +489,14 @@ def build_wedding_assembly_plan(
         int(clip.get("motion_trim_total_ms", 0) or 0) for clip in motion_trimmed
     )
     continuous_motion = sum(
-        1 for clip in final_clips
+        1
+        for clip in final_clips
         if clip.get("motion_classification") == "continuous_motion"
     )
 
     return {
-        "schema_version": "0.6",
-        "ending_director": {key:value for key,value in ending.items() if key != "candidate"},
+        "schema_version": "0.7",
+        "ending_director": {key: value for key, value in ending.items() if key != "candidate"},
         "visual_semantics_applied": any(clip.get("visual_semantics") for clip in final_clips),
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
@@ -515,6 +525,7 @@ def build_wedding_assembly_plan(
             and any(clip.get("director_phase") == "cold_open" for clip in final_clips)
         ),
         "motion_gate_engine": "motion-gate-v1",
+        "motion_gate_schema": MOTION_GATE_SCHEMA,
         "motion_gate_applied": bool(motion_trimmed),
         "motion_trimmed_clip_count": len(motion_trimmed),
         "motion_trimmed_total_ms": motion_trimmed_ms,
@@ -571,8 +582,16 @@ class WeddingAssemblyPipeline:
             and asset_from_path(asset["path"])["fingerprint"] != asset.get("fingerprint")
             for asset in library.get("assets", [])
         )
-        if not isinstance(batch_summary, dict) or source_changed:
-            stage("Fazendo análise rápida da biblioteca antes da montagem...")
+        motion_cache_stale = (
+            project.get("profile") == "Casamento"
+            and isinstance(batch_summary, dict)
+            and str(batch_summary.get("motion_gate_schema") or "") != MOTION_GATE_SCHEMA
+        )
+        if not isinstance(batch_summary, dict) or source_changed or motion_cache_stale:
+            if motion_cache_stale and not source_changed:
+                stage("Atualizando Motion Gate para localizar chicotes internos...")
+            else:
+                stage("Fazendo análise rápida da biblioteca antes da montagem...")
             batch_summary = BatchVisualAnalysisPipeline(
                 manager=self.manager,
                 tools=self.tools,
@@ -584,13 +603,17 @@ class WeddingAssemblyPipeline:
             )
 
         check_cancelled(cancel)
-        # Validate cache against current files/model even when batch analysis was
-        # loaded from disk. This also upgrades projects created before vision.
         semantic_result = VisualSemanticsPipeline(manager=self.manager, tools=self.tools).run(
-            root, _valid_candidates(batch_summary, library), cancel=cancel, stage=stage,
+            root,
+            _valid_candidates(batch_summary, library),
+            cancel=cancel,
+            stage=stage,
             progress=lambda value: progress(28 + int(value * 0.04)),
         )
-        batch_summary = {**batch_summary, "best_take_candidates": semantic_result["candidates"]}
+        batch_summary = {
+            **batch_summary,
+            "best_take_candidates": semantic_result["candidates"],
+        }
         reference_style = None
         reference_music = None
         music_analysis = None
@@ -682,6 +705,26 @@ class WeddingAssemblyPipeline:
             stage=stage,
         )
 
+        # Renderer pode centralizar um take no trecho exato de votos. Regrava o
+        # plano depois do render para Review/cache refletirem o que saiu no MP4.
+        plan["slow_motion_count"] = int(
+            getattr(self.renderer, "last_slow_motion_count", 0) or 0
+        )
+        plan["dialogue_focus_count"] = int(
+            getattr(self.renderer, "last_dialogue_focus_count", 0) or 0
+        )
+        plan["dialogue_focus_text"] = getattr(
+            self.renderer,
+            "last_dialogue_text",
+            None,
+        )
+        plan["dialogue_director_reason"] = getattr(
+            self.renderer,
+            "last_dialogue_director_reason",
+            None,
+        )
+        write_json(root / WEDDING_ASSEMBLY_PLAN_PATH, plan)
+
         check_cancelled(cancel)
         duration_ms = int(plan["estimated_duration_ms"])
         edit_plan = build_edit_plan(
@@ -707,8 +750,13 @@ class WeddingAssemblyPipeline:
             wedding_story_sections=plan["story_sections"],
             wedding_source_audio_policy=plan["source_audio_policy"],
             wedding_motion_gate=plan.get("motion_gate_engine"),
+            wedding_motion_gate_schema=plan.get("motion_gate_schema"),
             wedding_motion_trimmed_clip_count=plan.get("motion_trimmed_clip_count", 0),
             wedding_motion_trimmed_total_ms=plan.get("motion_trimmed_total_ms", 0),
+            wedding_slow_motion_count=plan.get("slow_motion_count", 0),
+            wedding_dialogue_focus_count=plan.get("dialogue_focus_count", 0),
+            wedding_dialogue_focus_text=plan.get("dialogue_focus_text"),
+            wedding_dialogue_director_reason=plan.get("dialogue_director_reason"),
             reference_story_director_path=(
                 REFERENCE_STORY_DIRECTOR_PATH if reference_story_director else None
             ),
@@ -733,21 +781,28 @@ class WeddingAssemblyPipeline:
         progress(100)
         shortfall = int(plan.get("duration_shortfall_ms", 0) or 0)
         motion_count = int(plan.get("motion_trimmed_clip_count", 0) or 0)
+        slow_count = int(plan.get("slow_motion_count", 0) or 0)
+        voice_count = int(plan.get("dialogue_focus_count", 0) or 0)
         director_text = (
             " • Story Director ativo"
             if plan.get("reference_story_director_applied")
             else ""
         )
+        emotion_text = ""
+        if slow_count:
+            emotion_text += f" • {slow_count} slow motion(s)"
+        if voice_count:
+            emotion_text += f" • {voice_count} momento(s) de voz"
         if shortfall > 1500:
             stage(
                 f"História pronta com {plan['clip_count']} takes. "
-                f"Motion Gate ajustou {motion_count} borda(s){director_text}. "
+                f"Motion Gate ajustou {motion_count} borda(s){director_text}{emotion_text}. "
                 f"Faltaram {shortfall / 1000:.1f}s para a duração alvo."
             )
         else:
             stage(
                 f"História pronta: {plan['clip_count']} takes, "
-                f"{duration_ms / 1000:.1f}s{director_text}."
+                f"{duration_ms / 1000:.1f}s{director_text}{emotion_text}."
             )
         return {
             "audio_path": None,
