@@ -5,6 +5,18 @@ from PySide6.QtWidgets import QWidget
 from editor.edit_plan import validate_edit_plan
 
 
+STORY_COLORS = {
+    "making_of": "#5B5FEF",
+    "cerimonia": "#9B5DE5",
+    "votos_falas": "#E056FD",
+    "casal": "#D977A8",
+    "recepcao": "#3A86FF",
+    "festa": "#F59E0B",
+    "finale": "#10B981",
+    "nao_classificado": "#64748B",
+}
+
+
 class TimelineWidget(QWidget):
     segmentSelected = Signal(int)
     seekRequested = Signal(int)
@@ -20,14 +32,17 @@ class TimelineWidget(QWidget):
         self._waveform = []
         self._thumbnails = []
         self._content_analysis = None
-        self.setFixedHeight(98)
+        self._story_blocks = []
+        self._story_clips = []
+        self.setFixedHeight(118)
         self.setMouseTracking(True)
+        self.setStyleSheet("background:#0F1530;")
         self._apply_zoom()
 
     def sizeHint(self):
         return QSize(
             int(self._base_width * self._zoom),
-            98,
+            118,
         )
 
     def set_plan(self, plan):
@@ -70,7 +85,30 @@ class TimelineWidget(QWidget):
             if isinstance(analysis, dict)
             else None
         )
+        story = (
+            self._content_analysis.get("wedding_story")
+            if self._content_analysis
+            else None
+        )
+        blocks = story.get("blocks") if isinstance(story, dict) else None
+        clips = story.get("clips") if isinstance(story, dict) else None
+        self._story_blocks = [
+            dict(item)
+            for item in (blocks or [])
+            if isinstance(item, dict)
+        ]
+        self._story_clips = [
+            dict(item)
+            for item in (clips or [])
+            if isinstance(item, dict)
+        ]
         self.update()
+
+    def story_blocks(self):
+        return [dict(item) for item in self._story_blocks]
+
+    def story_clips(self):
+        return [dict(item) for item in self._story_clips]
 
     def set_playhead_source_ms(self, value):
         if self._plan is None:
@@ -99,15 +137,89 @@ class TimelineWidget(QWidget):
 
         self.update()
 
+    def _story_area(self):
+        return self.rect().adjusted(12, 4, -12, -92)
+
+    def _video_area(self):
+        return self.rect().adjusted(12, 30, -12, -24)
+
+    def _paint_story_blocks(self, painter, duration):
+        if not self._story_blocks or duration <= 0:
+            return
+
+        area = self._story_area()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.fillRect(area, QColor("#10172E"))
+
+        for block in self._story_blocks:
+            try:
+                start_ms = int(block.get("start_ms", 0) or 0)
+                end_ms = int(block.get("end_ms", start_ms) or start_ms)
+            except (TypeError, ValueError):
+                continue
+            if end_ms <= start_ms:
+                continue
+
+            start_ratio = max(0.0, min(1.0, start_ms / duration))
+            end_ratio = max(0.0, min(1.0, end_ms / duration))
+            x = area.left() + area.width() * start_ratio
+            width = max(1.0, area.width() * (end_ratio - start_ratio))
+            rect = QRectF(x, area.top(), width, area.height())
+
+            section = str(block.get("section") or "nao_classificado")
+            color = QColor(STORY_COLORS.get(section, STORY_COLORS["nao_classificado"]))
+            color.setAlpha(205)
+            painter.fillRect(rect, color)
+
+            if width >= 48:
+                painter.setPen(QColor("#FFFFFF"))
+                label = str(block.get("label") or section.replace("_", " ").title())
+                metrics = painter.fontMetrics()
+                text = metrics.elidedText(
+                    label,
+                    Qt.TextElideMode.ElideRight,
+                    max(1, int(width - 8)),
+                )
+                painter.drawText(
+                    rect.adjusted(4, 0, -4, 0),
+                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                    text,
+                )
+                painter.setPen(Qt.PenStyle.NoPen)
+
+    def _paint_multisource_cuts(self, painter, area, duration):
+        if not self._story_clips or duration <= 0:
+            return
+
+        painter.setPen(QPen(QColor(255, 255, 255, 115), 1))
+        for clip in self._story_clips[1:]:
+            try:
+                start_ms = int(clip.get("start_ms", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if start_ms <= 0 or start_ms >= duration:
+                continue
+            x = area.left() + area.width() * (start_ms / duration)
+            painter.drawLine(
+                int(x),
+                int(area.top()),
+                int(x),
+                int(area.bottom()),
+            )
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        area = self.rect().adjusted(12, 20, -12, -24)
-        painter.fillRect(area, QColor("#20242b"))
+        # Pinta todo o canvas. Antes apenas as faixas internas recebiam cor e
+        # as margens ficavam com o fundo claro padrão do QWidget no Windows.
+        painter.fillRect(self.rect(), QColor("#0F1530"))
+
+        area = self._video_area()
+        painter.fillRect(area, QColor("#0F1530"))
 
         if self._plan is None:
-            painter.setPen(QColor("#9aa4b2"))
+            painter.setPen(QColor("#9AA6CF"))
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
@@ -118,6 +230,8 @@ class TimelineWidget(QWidget):
         duration = self._plan["source_duration_ms"]
         if duration <= 0:
             return
+
+        self._paint_story_blocks(painter, duration)
 
         if self._thumbnails:
             thumb_width = (
@@ -159,17 +273,17 @@ class TimelineWidget(QWidget):
 
             if segment["action"] == "remove":
                 fill = QColor(
-                    217,
-                    93,
-                    93,
-                    185 if self._thumbnails else 255,
+                    255,
+                    92,
+                    122,
+                    190 if self._thumbnails else 235,
                 )
             else:
                 fill = QColor(
-                    74,
-                    168,
-                    137,
-                    150 if self._thumbnails else 255,
+                    139,
+                    92,
+                    246,
+                    72 if self._thumbnails else 150,
                 )
 
             painter.fillRect(rect, fill)
@@ -184,8 +298,10 @@ class TimelineWidget(QWidget):
                 )
 
             if index == self._selected_index:
-                painter.setPen(QPen(QColor("#ffffff"), 2))
+                painter.setPen(QPen(QColor("#D8B4FE"), 2))
                 painter.drawRect(rect)
+
+        self._paint_multisource_cuts(painter, area, duration)
 
         if self._waveform:
             center_y = area.center().y()
@@ -266,7 +382,7 @@ class TimelineWidget(QWidget):
         painter.setPen(QPen(QColor("#ffffff"), 2))
         painter.drawLine(
             int(playhead_x),
-            area.top() - 6,
+            self._story_area().top() - 1 if self._story_blocks else area.top() - 6,
             int(playhead_x),
             area.bottom() + 6,
         )
@@ -287,8 +403,10 @@ class TimelineWidget(QWidget):
         if self._plan is None:
             return
 
-        area = self.rect().adjusted(12, 20, -12, -24)
-        if not area.contains(event.position().toPoint()):
+        area = self._video_area()
+        story_area = self._story_area()
+        point = event.position().toPoint()
+        if not area.contains(point) and not story_area.contains(point):
             return
 
         ratio = (

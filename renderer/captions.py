@@ -90,16 +90,26 @@ def _caption_words(transcript, plan):
                 end > start
                 and _kept(plan, midpoint)
             ):
-                items.append(
-                    {
-                        "start_ms": start,
-                        "end_ms": end,
-                        "text": segment.get(
-                            "text",
-                            "",
-                        ).strip(),
-                    }
+                edited_start = source_to_edited_ms(
+                    plan,
+                    start,
                 )
+                edited_end = source_to_edited_ms(
+                    plan,
+                    end,
+                )
+                if edited_end > edited_start:
+                    items.append(
+                        {
+                            "start_ms": edited_start,
+                            "end_ms": edited_end,
+                            "text": segment.get(
+                                "text",
+                                "",
+                            ).strip(),
+                            "is_phrase": True,
+                        }
+                    )
             continue
 
         for word in words:
@@ -127,27 +137,71 @@ def _caption_words(transcript, plan):
             if not text:
                 continue
 
+            edited_start = source_to_edited_ms(
+                plan,
+                start,
+            )
+            edited_end = source_to_edited_ms(
+                plan,
+                end,
+            )
+
+            if edited_end <= edited_start:
+                continue
+
             items.append(
                 {
-                    "start_ms": start,
-                    "end_ms": end,
+                    "start_ms": edited_start,
+                    "end_ms": edited_end,
                     "text": text,
+                    "is_phrase": False,
                 }
             )
 
     return items
 
 
-def _chunks(transcript, plan):
+def _chunk_limits(style, play_res_x, play_res_y):
+    vertical = play_res_y > play_res_x * 1.15
+
+    if style == "Impacto":
+        return (3 if vertical else 4), 1650
+
+    if style == "Dinâmica":
+        return (4 if vertical else 5), 2100
+
+    return (5 if vertical else 6), 2800
+
+
+def _chunks(
+    transcript,
+    plan,
+    *,
+    style,
+    play_res_x,
+    play_res_y,
+):
     words = _caption_words(
         transcript,
         plan,
+    )
+    max_words, max_duration = _chunk_limits(
+        style,
+        play_res_x,
+        play_res_y,
     )
 
     chunks = []
     current = []
 
     for item in words:
+        if item.get("is_phrase"):
+            if current:
+                chunks.append(current)
+                current = []
+            chunks.append([item])
+            continue
+
         if current:
             gap = (
                 item["start_ms"]
@@ -159,9 +213,9 @@ def _chunks(transcript, plan):
             )
 
             if (
-                len(current) >= 5
-                or gap > 500
-                or duration > 2400
+                len(current) >= max_words
+                or gap > 450
+                or duration > max_duration
             ):
                 chunks.append(current)
                 current = []
@@ -171,79 +225,137 @@ def _chunks(transcript, plan):
     if current:
         chunks.append(current)
 
-    output = []
+    return [
+        {
+            "start_ms": chunk[0]["start_ms"],
+            "end_ms": chunk[-1]["end_ms"],
+            "words": chunk,
+        }
+        for chunk in chunks
+        if chunk[-1]["end_ms"] > chunk[0]["start_ms"]
+    ]
 
-    for chunk in chunks:
-        source_start = chunk[0]["start_ms"]
-        source_end = chunk[-1]["end_ms"]
 
-        edited_start = source_to_edited_ms(
-            plan,
-            source_start,
+def _font_metrics(style, play_res_x, play_res_y):
+    vertical = play_res_y > play_res_x * 1.15
+
+    if vertical:
+        base = max(
+            46,
+            int(round(play_res_y * 0.041)),
         )
-        edited_end = source_to_edited_ms(
-            plan,
-            source_end,
+        margin_v = max(
+            110,
+            int(round(play_res_y * 0.105)),
+        )
+        margin_h = max(
+            42,
+            int(round(play_res_x * 0.06)),
+        )
+    else:
+        base = max(
+            34,
+            int(round(play_res_y * 0.052)),
+        )
+        margin_v = max(
+            36,
+            int(round(play_res_y * 0.075)),
+        )
+        margin_h = max(
+            40,
+            int(round(play_res_x * 0.025)),
         )
 
-        if edited_end <= edited_start:
-            continue
+    if style == "Impacto":
+        base = int(round(base * 1.16))
+    elif style == "Dinâmica":
+        base = int(round(base * 1.06))
 
-        output.append(
-            {
-                "start_ms": edited_start,
-                "end_ms": edited_end,
-                "text": " ".join(
-                    item["text"]
-                    for item in chunk
-                ),
-            }
-        )
-
-    return output
+    return base, margin_h, margin_v
 
 
-def _style_line(style, play_res_y):
-    font_size = max(
-        34,
-        int(round(play_res_y * 0.052)),
-    )
-    margin_v = max(
-        36,
-        int(round(play_res_y * 0.075)),
+def _style_line(style, play_res_x, play_res_y):
+    font_size, margin_h, margin_v = _font_metrics(
+        style,
+        play_res_x,
+        play_res_y,
     )
 
     if style == "Dinâmica":
         return (
-            "Style: Default,Arial,"
+            "Style: Default,Segoe UI,"
             f"{font_size},"
-            "&H0000FFFF,&H0000FFFF,"
-            "&H00000000,&H00000000,"
+            "&H0000D7FF,&H00FFFFFF,"
+            "&H00111118,&H70000000,"
             "-1,0,0,0,100,100,0,0,"
             "1,4,1,2,"
-            f"40,40,{margin_v},1"
+            f"{margin_h},{margin_h},{margin_v},1"
         )
 
     if style == "Impacto":
         return (
-            "Style: Default,Arial,"
+            "Style: Default,Segoe UI,"
             f"{font_size},"
-            "&H00FFFFFF,&H00FFFFFF,"
-            "&H00000000,&H80000000,"
-            "-1,0,0,0,100,100,0,0,"
-            "3,1,0,2,"
-            f"48,48,{margin_v},1"
+            "&H00FFFFFF,&H00FF66D9,"
+            "&H00100018,&H90000000,"
+            "-1,0,0,0,104,104,0.8,0,"
+            "3,2,1,2,"
+            f"{margin_h},{margin_h},{margin_v},1"
         )
 
     return (
-        "Style: Default,Arial,"
+        "Style: Default,Segoe UI,"
         f"{font_size},"
-        "&H00FFFFFF,&H00FFFFFF,"
-        "&H00000000,&H00000000,"
+        "&H00FFFFFF,&H00D8D8D8,"
+        "&H00101016,&H70000000,"
         "0,0,0,0,100,100,0,0,"
         "1,3,1,2,"
-        f"40,40,{margin_v},1"
+        f"{margin_h},{margin_h},{margin_v},1"
     )
+
+
+def _karaoke_text(chunk, style):
+    words = chunk["words"]
+
+    if (
+        style == "Clean"
+        or len(words) == 1
+        and words[0].get("is_phrase")
+    ):
+        text = " ".join(
+            word["text"]
+            for word in words
+        )
+        return _escape_text(text)
+
+    pieces = []
+
+    for word in words:
+        duration_cs = max(
+            1,
+            int(round(
+                (
+                    word["end_ms"]
+                    - word["start_ms"]
+                )
+                / 10
+            )),
+        )
+        text = _escape_text(
+            word["text"].upper()
+            if style == "Impacto"
+            else word["text"]
+        )
+        pieces.append(
+            f"{{\\kf{duration_cs}}}{text}"
+        )
+
+    prefix = (
+        r"{\fad(55,85)\blur0.25}"
+        if style == "Impacto"
+        else r"{\fad(70,90)}"
+    )
+    return prefix + " ".join(pieces)
 
 
 def write_ass_captions(
@@ -273,13 +385,14 @@ def write_ass_captions(
     for chunk in _chunks(
         transcript,
         edit_plan,
+        style=style,
+        play_res_x=int(play_res_x),
+        play_res_y=int(play_res_y),
     ):
-        text = _escape_text(
-            chunk["text"]
+        text = _karaoke_text(
+            chunk,
+            style,
         )
-
-        if style == "Impacto":
-            text = text.upper()
 
         events.append(
             "Dialogue: 0,"
@@ -296,6 +409,7 @@ def write_ass_captions(
         f"PlayResY: {int(play_res_y)}",
         "WrapStyle: 2",
         "ScaledBorderAndShadow: yes",
+        "YCbCr Matrix: TV.709",
         "",
         "[V4+ Styles]",
         (
@@ -309,6 +423,7 @@ def write_ass_captions(
         ),
         _style_line(
             style,
+            int(play_res_x),
             int(play_res_y),
         ),
         "",

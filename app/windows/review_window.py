@@ -10,9 +10,12 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -26,6 +29,19 @@ from PySide6.QtWidgets import (
 )
 
 from app.review_worker import ReviewWorker
+from app.ui.components import (
+    ModernSwitch,
+    QualityCardButton,
+    card,
+    info_row,
+    muted_label,
+    option_button,
+    section_title,
+)
+from app.ui.icons import app_icon, icon_pixmap
+from app.ui.shell import TakeDreamSidebar
+from app.ui.theme import apply_review_theme
+from app.ui.windows import enable_dark_title_bar
 from app.widgets.timeline_widget import TimelineWidget
 from core.content_pipeline import load_content_analysis
 from core.edit_pipeline import load_edit_state
@@ -33,6 +49,10 @@ from core.project_manager import ProjectManager
 from core.render_settings import normalize_render_settings
 from media.thumbnails import load_thumbnail_manifest
 from media.waveform import load_or_create_waveform
+from profiles import (
+    get_style_preset,
+    styles_for_profile,
+)
 from editor.review import (
     adjust_removed_segment,
     edited_to_source_ms,
@@ -49,8 +69,23 @@ from renderer.formats import ASPECT_RATIOS
 
 
 class ReviewWindow(QMainWindow):
-    def __init__(self, project_dir, parent=None):
+    def __init__(
+        self,
+        project_dir,
+        parent=None,
+        *,
+        embedded=False,
+        host=None,
+    ):
         super().__init__(parent)
+
+        self.embedded = embedded
+        self.host = host
+
+        if embedded:
+            self.setWindowFlags(
+                Qt.WindowType.Widget
+            )
 
         self.project_manager = ProjectManager()
         self.project_dir, self.project_data = (
@@ -94,20 +129,154 @@ class ReviewWindow(QMainWindow):
         self.setWindowTitle(
             f"TakeDream — Revisão — {self.project_data['name']}"
         )
-        self.resize(1280, 900)
+        self.resize(1480, 920)
+        self.setMinimumSize(1180, 760)
 
-        container = QWidget()
-        layout = QVBoxLayout(container)
+        root = QWidget()
+        root.setObjectName("Root")
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        title = QLabel(
-            f"Revisão da edição • "
-            f"{self.project_data.get('profile', '—')} / "
-            f"{self.project_data.get('style', '—')}"
+        self.sidebar = TakeDreamSidebar("review")
+        self.sidebar.navigate.connect(
+            self._sidebar_nav
         )
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # ==============================================================
+        # MAIN CONTENT WRAPPER
+        # ==============================================================
+        content = QWidget()
+        content.setObjectName("AppPage")
+        content.setMinimumWidth(1160)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(18, 18, 18, 16)
+        content_layout.setSpacing(14)
+
+        header_row = QHBoxLayout()
+        header_icon = QLabel()
+        header_icon.setFixedSize(42, 42)
+        header_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_icon.setPixmap(
+            icon_pixmap(
+                "review",
+                color="#FFFFFF",
+                accent="#C084FC",
+                size=28,
+            )
+        )
+        header_icon.setStyleSheet(
+            "background:#6D28D9; border-radius:21px;"
+        )
+
+        header_texts = QVBoxLayout()
+        header_texts.setSpacing(0)
+        title = QLabel("Revisão da edição")
+        title.setObjectName("PageTitle")
+        subtitle = QLabel(
+            "Ajuste o resultado e veja como o vídeo vai ficar."
+        )
+        subtitle.setObjectName("PageSubtitle")
+        header_texts.addWidget(title)
+        header_texts.addWidget(subtitle)
+
+        header_row.addWidget(header_icon)
+        header_row.addSpacing(8)
+        header_row.addLayout(header_texts)
+        header_row.addStretch(1)
+
+        self.status_label = QLabel(
+            "Prévia carregada. Revise os cortes."
+        )
+        self.status_label.setProperty("muted", True)
+        self.status_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.status_label.setWordWrap(True)
+        self.status_label.setMaximumWidth(380)
+        header_row.addWidget(self.status_label)
+
+        content_layout.addLayout(header_row)
+
+        body = QHBoxLayout()
+        body.setSpacing(12)
+
+        # ==============================================================
+        # CENTER EDITOR
+        # ==============================================================
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(10)
+
+        project_bar = card()
+        project_bar_layout = QHBoxLayout(project_bar)
+        project_bar_layout.setContentsMargins(14, 10, 14, 10)
+        project_bar_layout.setSpacing(10)
+
+        project_name = QLabel(
+            self.project_data.get("name", "Projeto")
+        )
+        project_name.setObjectName("ProjectTitle")
+        project_bar_layout.addWidget(project_name)
+        project_bar_layout.addStretch(1)
+
+        self.aspect_combo = QComboBox()
+        for aspect in ASPECT_RATIOS:
+            self.aspect_combo.addItem(
+                aspect.label,
+                aspect.key,
+            )
+        aspect_index = self.aspect_combo.findData(
+            self.render_settings["aspect_ratio"]
+        )
+        if aspect_index >= 0:
+            self.aspect_combo.setCurrentIndex(aspect_index)
+        self.aspect_combo.hide()
+
+        self.aspect_buttons = {}
+        self.aspect_group = QButtonGroup(self)
+        self.aspect_group.setExclusive(True)
+
+        for aspect in ASPECT_RATIOS:
+            button = option_button(
+                aspect.key,
+                checked=(
+                    aspect.key
+                    == self.render_settings["aspect_ratio"]
+                ),
+                icon_name="video",
+            )
+            button.setFixedWidth(68)
+            self.aspect_group.addButton(button)
+            self.aspect_buttons[aspect.key] = button
+            button.clicked.connect(
+                lambda checked=False, key=aspect.key:
+                self._select_aspect_ratio(key)
+            )
+            project_bar_layout.addWidget(button)
+
+        self.aspect_combo.currentIndexChanged.connect(
+            self._sync_aspect_buttons
+        )
+        self.aspect_combo.currentIndexChanged.connect(
+            self._settings_changed
+        )
+
+        center_layout.addWidget(project_bar)
+
+        # Player card.
+        player_card = card(object_name="PlayerCard")
+        player_layout = QVBoxLayout(player_card)
+        player_layout.setContentsMargins(10, 10, 10, 10)
+        player_layout.setSpacing(7)
 
         self.video_widget = QVideoWidget()
-        self.video_widget.setMinimumHeight(400)
+        self.video_widget.setMinimumHeight(350)
+        self.video_widget.setStyleSheet(
+            "background:#050814; border-radius:10px;"
+        )
 
         self.audio_output = QAudioOutput(self)
         self.audio_output.setVolume(0.8)
@@ -122,7 +291,11 @@ class ReviewWindow(QMainWindow):
             self._on_duration_changed
         )
 
-        self.play_button = QPushButton("▶ Reproduzir")
+        self.play_button = QPushButton()
+        self.play_button.setIcon(
+            app_icon("play", color="#FFFFFF", accent="#A855F7", size=18)
+        )
+        self.play_button.setFixedWidth(44)
         self.play_button.clicked.connect(self._toggle_playback)
 
         self.position_slider = QSlider(
@@ -134,132 +307,96 @@ class ReviewWindow(QMainWindow):
         )
 
         self.time_label = QLabel("00:00 / 00:00")
+        self.time_label.setProperty("muted", True)
 
         player_controls = QHBoxLayout()
+        player_controls.setSpacing(9)
         player_controls.addWidget(self.play_button)
-        player_controls.addWidget(
-            self.position_slider,
-            1,
-        )
+        player_controls.addWidget(self.position_slider, 1)
         player_controls.addWidget(self.time_label)
 
-        self.summary_label = QLabel()
-        self.summary_label.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
+        player_layout.addWidget(self.video_widget, 1)
+        player_layout.addLayout(player_controls)
+
+        center_layout.addWidget(player_card, 3)
+
+        # Timeline + toolbar.
+        timeline_card = card(object_name="TimelineCard")
+        timeline_layout = QVBoxLayout(timeline_card)
+        timeline_layout.setContentsMargins(12, 10, 12, 10)
+        timeline_layout.setSpacing(8)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(7)
+
+        self.undo_button = QPushButton("Desfazer")
+        self.undo_button.setIcon(app_icon("undo", color="#EDE9FE", accent="#A855F7", size=16))
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self._undo)
+
+        self.redo_button = QPushButton("Refazer")
+        self.redo_button.setIcon(app_icon("redo", color="#EDE9FE", accent="#A855F7", size=16))
+        self.redo_button.setEnabled(False)
+        self.redo_button.clicked.connect(self._redo)
+
+        self.split_button = QPushButton("Dividir")
+        self.split_button.setIcon(app_icon("split", color="#EDE9FE", accent="#A855F7", size=16))
+        self.split_button.clicked.connect(self._split_at_cursor)
+
+        self.remove_selected_button = QPushButton("Excluir")
+        self.remove_selected_button.setIcon(app_icon("delete", color="#F8D5DC", accent="#FF6B81", size=16))
+        self.remove_selected_button.setEnabled(False)
+        self.remove_selected_button.clicked.connect(
+            self._remove_selected_segment
         )
 
-        visual_controls = QHBoxLayout()
-        visual_controls.addWidget(QLabel("Formato:"))
-
-        self.aspect_combo = QComboBox()
-        for aspect in ASPECT_RATIOS:
-            self.aspect_combo.addItem(
-                aspect.label,
-                aspect.key,
-            )
-        aspect_index = self.aspect_combo.findData(
-            self.render_settings["aspect_ratio"]
-        )
-        if aspect_index >= 0:
-            self.aspect_combo.setCurrentIndex(
-                aspect_index
-            )
-
-        self.captions_checkbox = QCheckBox(
-            "Legendas"
-        )
-        self.captions_checkbox.setChecked(
-            self.render_settings[
-                "captions_enabled"
-            ]
+        self.restore_button = QPushButton("Restaurar")
+        self.restore_button.setIcon(app_icon("restore", color="#EDE9FE", accent="#A855F7", size=16))
+        self.restore_button.setEnabled(False)
+        self.restore_button.clicked.connect(
+            self._restore_selected_cut
         )
 
-        self.caption_style_combo = QComboBox()
-        self.caption_style_combo.addItems(
-            CAPTION_STYLES
-        )
-        caption_index = (
-            self.caption_style_combo.findText(
-                self.render_settings[
-                    "caption_style"
-                ]
-            )
-        )
-        if caption_index >= 0:
-            self.caption_style_combo.setCurrentIndex(
-                caption_index
-            )
+        toolbar.addWidget(self.undo_button)
+        toolbar.addWidget(self.redo_button)
+        toolbar.addWidget(self.split_button)
+        toolbar.addWidget(self.remove_selected_button)
+        toolbar.addWidget(self.restore_button)
+        toolbar.addStretch(1)
 
-        self.auto_zoom_checkbox = QCheckBox(
-            "Zoom automático"
+        zoom_minus = QLabel("−")
+        zoom_minus.setStyleSheet(
+            "font-size:18px; color:#AAB2D8;"
         )
-        self.auto_zoom_checkbox.setChecked(
-            self.render_settings[
-                "auto_zoom"
-            ]
-        )
+        zoom_title = QLabel("Zoom")
+        zoom_title.setProperty("muted", True)
 
-        visual_controls.addWidget(
-            self.aspect_combo
-        )
-        visual_controls.addWidget(
-            self.captions_checkbox
-        )
-        visual_controls.addWidget(
-            self.caption_style_combo
-        )
-        visual_controls.addWidget(
-            self.auto_zoom_checkbox
-        )
-
-        self.aspect_combo.currentIndexChanged.connect(
-            self._settings_changed
-        )
-        self.captions_checkbox.toggled.connect(
-            self._settings_changed
-        )
-        self.caption_style_combo.currentIndexChanged.connect(
-            self._settings_changed
-        )
-        self.auto_zoom_checkbox.toggled.connect(
-            self._settings_changed
-        )
-
-        self.analyze_content_button = QPushButton(
-            "ANALISAR CONTEÚDO / IA V1"
-        )
-        self.analyze_content_button.clicked.connect(
-            lambda: self._start_worker("content")
-        )
-
-        self.content_summary_label = QLabel()
-        self.content_summary_label.setWordWrap(True)
-        self._refresh_content_summary()
-
-        legend = QLabel(
-            "Timeline: verde = mantido • vermelho = removido • "
-            "borda amarela = ajuste manual • laranja = fala • "
-            "azul = B-roll • roxo = zoom. Clique para selecionar."
-        )
-        legend.setWordWrap(True)
-
-        zoom_controls = QHBoxLayout()
-        zoom_controls.addWidget(QLabel("Zoom da timeline:"))
-
-        self.zoom_slider = QSlider(
-            Qt.Orientation.Horizontal
-        )
+        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self.zoom_slider.setRange(1, 10)
         self.zoom_slider.setValue(1)
+        self.zoom_slider.setFixedWidth(120)
         self.zoom_slider.valueChanged.connect(
             self._change_timeline_zoom
         )
 
         self.zoom_label = QLabel("1x")
+        self.zoom_label.setProperty("muted", True)
 
-        zoom_controls.addWidget(self.zoom_slider, 1)
-        zoom_controls.addWidget(self.zoom_label)
+        toolbar.addWidget(zoom_minus)
+        toolbar.addWidget(zoom_title)
+        toolbar.addWidget(self.zoom_slider)
+        toolbar.addWidget(self.zoom_label)
 
+        timeline_layout.addLayout(toolbar)
+
+        self.summary_label = QLabel()
+        self.summary_label.setProperty("muted", True)
+        self.summary_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        timeline_layout.addWidget(self.summary_label)
+
+        # Functional timeline.
         self.timeline = TimelineWidget()
         self.timeline.set_plan(self.plan)
         self.timeline.set_content_analysis(
@@ -273,81 +410,114 @@ class ReviewWindow(QMainWindow):
         )
 
         self.timeline_scroll = QScrollArea()
+        self.timeline_scroll.setObjectName("TimelineScroll")
+        self.timeline_scroll.viewport().setObjectName("TimelineViewport")
         self.timeline_scroll.setWidget(self.timeline)
         self.timeline_scroll.setWidgetResizable(False)
-        self.timeline_scroll.setMinimumHeight(130)
+        self.timeline_scroll.setMinimumHeight(112)
         self.timeline_scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
 
+        track_grid = QGridLayout()
+        track_grid.setHorizontalSpacing(8)
+        track_grid.setVerticalSpacing(5)
+        track_grid.setColumnStretch(1, 1)
+
+        video_label = QLabel("Vídeo")
+        video_label.setStyleSheet(
+            "font-weight:700; color:#E9E7FF;"
+        )
+        track_grid.addWidget(video_label, 0, 0)
+        track_grid.addWidget(self.timeline_scroll, 0, 1)
+
+        caption_track = QFrame()
+        caption_track.setFixedHeight(28)
+        caption_track.setStyleSheet(
+            "background:#32206D; border:1px solid #7656D8;"
+            "border-radius:7px;"
+        )
+        caption_track_layout = QHBoxLayout(caption_track)
+        caption_track_layout.setContentsMargins(10, 2, 10, 2)
+        caption_track_layout.addWidget(
+            QLabel("Que lugar incrível!     Vamos explorar...     Incrível!")
+        )
+
+        caption_label = QLabel("Legendas")
+        caption_label.setStyleSheet(
+            "font-weight:700; color:#E9E7FF;"
+        )
+        track_grid.addWidget(caption_label, 1, 0)
+        track_grid.addWidget(caption_track, 1, 1)
+
+        audio_track = QFrame()
+        audio_track.setFixedHeight(26)
+        audio_track.setStyleSheet(
+            "background:#0F3156; border:1px solid #1D6FA7;"
+            "border-radius:7px;"
+        )
+        audio_track_layout = QHBoxLayout(audio_track)
+        audio_track_layout.setContentsMargins(10, 0, 10, 0)
+        waveform_label = QLabel(
+            "▁▂▃▅▇▅▃▂▃▆▇▆▃▂▁  ▂▅▇▆▃▂  ▂▃▆▇▅▃▁"
+        )
+        waveform_label.setStyleSheet(
+            "color:#42B5F5; font-weight:700;"
+        )
+        audio_track_layout.addWidget(waveform_label)
+
+        audio_label = QLabel("Áudio")
+        audio_label.setStyleSheet(
+            "font-weight:700; color:#E9E7FF;"
+        )
+        track_grid.addWidget(audio_label, 2, 0)
+        track_grid.addWidget(audio_track, 2, 1)
+
+        music_track = QFrame()
+        music_track.setFixedHeight(26)
+        music_track.setStyleSheet(
+            "background:qlineargradient("
+            "x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #7C2DBA, stop:1 #43236A);"
+            "border:1px solid #A855F7; border-radius:7px;"
+        )
+        music_track_layout = QHBoxLayout(music_track)
+        music_track_layout.setContentsMargins(10, 0, 10, 0)
+        music_track_layout.addWidget(QLabel("Trilha"))
+
+        music_label = QLabel("Música")
+        music_label.setStyleSheet(
+            "font-weight:700; color:#E9E7FF;"
+        )
+        track_grid.addWidget(music_label, 3, 0)
+        track_grid.addWidget(music_track, 3, 1)
+
+        timeline_layout.addLayout(track_grid)
+
         self.selection_label = QLabel(
             "Nenhum trecho selecionado."
         )
+        self.selection_label.setProperty("muted", True)
         self.selection_label.setWordWrap(True)
+        timeline_layout.addWidget(self.selection_label)
 
-        self.split_button = QPushButton(
-            "DIVIDIR NO CURSOR"
-        )
-        self.split_button.clicked.connect(
-            self._split_at_cursor
-        )
+        # Compact advanced edit controls preserve all existing behavior.
+        fine_controls = QHBoxLayout()
+        fine_controls.setSpacing(6)
 
-        self.remove_selected_button = QPushButton(
-            "REMOVER TRECHO SELECIONADO"
-        )
-        self.remove_selected_button.setEnabled(False)
-        self.remove_selected_button.clicked.connect(
-            self._remove_selected_segment
-        )
+        self.mark_in_button = QPushButton("A  Entrada")
+        self.mark_in_button.clicked.connect(self._set_mark_in)
+        self.mark_out_button = QPushButton("B  Saída")
+        self.mark_out_button.clicked.connect(self._set_mark_out)
 
-        self.restore_button = QPushButton(
-            "RESTAURAR CORTE SELECIONADO"
-        )
-        self.restore_button.setEnabled(False)
-        self.restore_button.clicked.connect(
-            self._restore_selected_cut
-        )
-
-        selected_controls = QHBoxLayout()
-        selected_controls.addWidget(self.split_button)
-        selected_controls.addWidget(
-            self.remove_selected_button
-        )
-        selected_controls.addWidget(self.restore_button)
-
-        self.mark_in_button = QPushButton(
-            "MARCAR ENTRADA (A)"
-        )
-        self.mark_in_button.clicked.connect(
-            self._set_mark_in
-        )
-
-        self.mark_out_button = QPushButton(
-            "MARCAR SAÍDA (B)"
-        )
-        self.mark_out_button.clicked.connect(
-            self._set_mark_out
-        )
-
-        self.remove_range_button = QPushButton(
-            "REMOVER INTERVALO A → B"
-        )
+        self.remove_range_button = QPushButton("Remover A→B")
         self.remove_range_button.setEnabled(False)
         self.remove_range_button.clicked.connect(
             self._remove_marked_range
         )
 
-        self.range_label = QLabel(
-            "A: —  |  B: —"
-        )
-
-        range_controls = QHBoxLayout()
-        range_controls.addWidget(self.mark_in_button)
-        range_controls.addWidget(self.mark_out_button)
-        range_controls.addWidget(
-            self.remove_range_button
-        )
-        range_controls.addWidget(self.range_label)
+        self.range_label = QLabel("A: —  |  B: —")
+        self.range_label.setProperty("muted", True)
 
         self.cut_start_spin = QDoubleSpinBox()
         self.cut_start_spin.setDecimals(3)
@@ -359,59 +529,426 @@ class ReviewWindow(QMainWindow):
         self.cut_end_spin.setSuffix(" s")
         self.cut_end_spin.setSingleStep(0.050)
 
-        duration_seconds = (
-            self.plan["source_duration_ms"] / 1000
-        )
-        self.cut_start_spin.setRange(
-            0,
-            duration_seconds,
-        )
-        self.cut_end_spin.setRange(
-            0,
-            duration_seconds,
-        )
+        duration_seconds = self.plan["source_duration_ms"] / 1000
+        self.cut_start_spin.setRange(0, duration_seconds)
+        self.cut_end_spin.setRange(0, duration_seconds)
 
-        self.adjust_cut_button = QPushButton(
-            "APLICAR INÍCIO / FIM DO CORTE"
-        )
+        self.adjust_cut_button = QPushButton("Aplicar corte")
         self.adjust_cut_button.setEnabled(False)
         self.adjust_cut_button.clicked.connect(
             self._adjust_selected_cut
         )
 
-        adjust_controls = QHBoxLayout()
-        adjust_controls.addWidget(QLabel("Início:"))
-        adjust_controls.addWidget(self.cut_start_spin)
-        adjust_controls.addWidget(QLabel("Fim:"))
-        adjust_controls.addWidget(self.cut_end_spin)
-        adjust_controls.addWidget(
-            self.adjust_cut_button
-        )
+        fine_controls.addWidget(self.mark_in_button)
+        fine_controls.addWidget(self.mark_out_button)
+        fine_controls.addWidget(self.remove_range_button)
+        fine_controls.addWidget(self.range_label)
+        fine_controls.addStretch(1)
+        fine_controls.addWidget(QLabel("Início"))
+        fine_controls.addWidget(self.cut_start_spin)
+        fine_controls.addWidget(QLabel("Fim"))
+        fine_controls.addWidget(self.cut_end_spin)
+        fine_controls.addWidget(self.adjust_cut_button)
 
-        self.undo_button = QPushButton(
-            "↶ DESFAZER"
-        )
-        self.undo_button.setEnabled(False)
-        self.undo_button.clicked.connect(self._undo)
+        timeline_layout.addLayout(fine_controls)
 
-        self.redo_button = QPushButton(
-            "↷ REFAZER"
-        )
-        self.redo_button.setEnabled(False)
-        self.redo_button.clicked.connect(self._redo)
-
-        self.reset_button = QPushButton(
-            "VOLTAR À ÚLTIMA PRÉVIA"
-        )
+        self.reset_button = QPushButton("Voltar à última prévia")
         self.reset_button.setEnabled(False)
         self.reset_button.clicked.connect(
             self._reset_review_changes
         )
+        self.reset_button.setMaximumWidth(190)
+        timeline_layout.addWidget(
+            self.reset_button,
+            alignment=Qt.AlignmentFlag.AlignRight,
+        )
 
-        history_controls = QHBoxLayout()
-        history_controls.addWidget(self.undo_button)
-        history_controls.addWidget(self.redo_button)
-        history_controls.addWidget(self.reset_button)
+        center_layout.addWidget(timeline_card, 2)
+
+        # ==============================================================
+        # RIGHT CONTROL PANEL
+        # ==============================================================
+        right_panel = QWidget()
+        right_panel.setFixedWidth(325)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(9)
+
+        style_card = card()
+        style_layout = QVBoxLayout(style_card)
+        style_layout.setContentsMargins(12, 12, 12, 12)
+        style_layout.setSpacing(8)
+        style_layout.addWidget(section_title("Estilo aplicado", "sparkles"))
+
+        style_grid = QGridLayout()
+        style_grid.setSpacing(7)
+        current_style = (
+            str(self.project_data.get("style", ""))
+            .strip()
+            .lower()
+        )
+        available_styles = styles_for_profile(
+            self.project_data.get(
+                "profile",
+                "YouTube",
+            )
+        )
+
+        for index, name in enumerate(
+            available_styles
+        ):
+            preset = get_style_preset(name)
+            selected = (
+                name.lower() == current_style
+                or (
+                    name == "Dinâmico"
+                    and current_style == "dinamico"
+                )
+            )
+            style_button = option_button(
+                name,
+                checked=selected,
+                icon_name=preset.icon,
+            )
+            style_button.setToolTip(
+                preset.description
+            )
+            style_button.setEnabled(False)
+            style_grid.addWidget(
+                style_button,
+                index // 2,
+                index % 2,
+            )
+        style_layout.addLayout(style_grid)
+        right_layout.addWidget(style_card)
+
+        self.captions_checkbox = ModernSwitch(
+            "Legendas automáticas"
+        )
+        self.captions_checkbox.setChecked(
+            self.render_settings["captions_enabled"]
+        )
+
+        captions_card = card()
+        captions_layout = QVBoxLayout(captions_card)
+        captions_layout.setContentsMargins(12, 10, 12, 10)
+        captions_layout.addWidget(self.captions_checkbox)
+        captions_layout.addWidget(
+            muted_label(
+                "Gera legendas automaticamente usando "
+                "a transcrição do projeto.",
+                True,
+            )
+        )
+        right_layout.addWidget(captions_card)
+
+        self.auto_zoom_checkbox = ModernSwitch(
+            "Zoom automático"
+        )
+        self.auto_zoom_checkbox.setChecked(
+            self.render_settings["auto_zoom"]
+        )
+
+        zoom_card = card()
+        zoom_card_layout = QVBoxLayout(zoom_card)
+        zoom_card_layout.setContentsMargins(12, 10, 12, 10)
+        zoom_card_layout.addWidget(self.auto_zoom_checkbox)
+        zoom_card_layout.addWidget(
+            muted_label(
+                "Aplica punch zoom nos momentos sugeridos "
+                "pela análise do conteúdo.",
+                True,
+            )
+        )
+        right_layout.addWidget(zoom_card)
+
+        caption_style_card = card()
+        caption_style_layout = QVBoxLayout(caption_style_card)
+        caption_style_layout.setContentsMargins(12, 12, 12, 12)
+        caption_style_layout.setSpacing(7)
+        caption_style_layout.addWidget(
+            section_title("Estilo das legendas", "captions")
+        )
+
+        self.caption_style_combo = QComboBox()
+        self.caption_style_combo.addItems(CAPTION_STYLES)
+        caption_index = self.caption_style_combo.findText(
+            self.render_settings["caption_style"]
+        )
+        if caption_index >= 0:
+            self.caption_style_combo.setCurrentIndex(caption_index)
+        self.caption_style_combo.hide()
+
+        self.caption_style_buttons = {}
+        caption_style_group = QButtonGroup(self)
+        caption_style_group.setExclusive(True)
+
+        caption_styles_row = QHBoxLayout()
+        for name in CAPTION_STYLES:
+            button = option_button(
+                name,
+                checked=(
+                    name
+                    == self.render_settings["caption_style"]
+                ),
+                icon_name="captions",
+            )
+            caption_style_group.addButton(button)
+            self.caption_style_buttons[name] = button
+            button.clicked.connect(
+                lambda checked=False, style=name:
+                self._select_caption_style(style)
+            )
+            caption_styles_row.addWidget(button)
+
+        caption_style_layout.addLayout(caption_styles_row)
+        right_layout.addWidget(caption_style_card)
+
+        ai_card = card()
+        ai_layout = QVBoxLayout(ai_card)
+        ai_layout.setContentsMargins(12, 12, 12, 12)
+        ai_layout.setSpacing(7)
+        ai_layout.addWidget(section_title("Sugestões da IA", "ai"))
+
+        self.ai_hesitation_value = QLabel("Aguardando análise")
+        self.ai_repetition_value = QLabel("Aguardando análise")
+        self.ai_broll_value = QLabel("Aguardando análise")
+        self.ai_zoom_value = QLabel("Aguardando análise")
+
+        for title_text, value_label, icon_name in (
+            ("Hesitações", self.ai_hesitation_value, "podcast"),
+            ("Repetições", self.ai_repetition_value, "restore"),
+            ("B-roll", self.ai_broll_value, "broll"),
+            ("Zoom", self.ai_zoom_value, "zoom"),
+        ):
+            row = QFrame()
+            row.setStyleSheet(
+                "background:#171F3D; border:1px solid #2B3762;"
+                "border-radius:9px;"
+            )
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(9, 7, 9, 7)
+
+            badge = QLabel()
+            badge.setFixedSize(28, 28)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setStyleSheet(
+                "background:#432B87; border-radius:7px;"
+            )
+            badge.setPixmap(
+                icon_pixmap(
+                    icon_name,
+                    color="#FFFFFF",
+                    accent="#C084FC",
+                    size=16,
+                )
+            )
+            texts = QVBoxLayout()
+            texts.setSpacing(0)
+            title_label = QLabel(title_text)
+            title_label.setStyleSheet(
+                "font-weight:700; color:#FFFFFF;"
+            )
+            value_label.setProperty("muted", True)
+            value_label.setWordWrap(True)
+            texts.addWidget(title_label)
+            texts.addWidget(value_label)
+
+            row_layout.addWidget(badge)
+            row_layout.addLayout(texts, 1)
+            ai_layout.addWidget(row)
+
+        self.analyze_content_button = QPushButton(
+            "Analisar conteúdo / IA V1"
+        )
+        self.analyze_content_button.setIcon(
+            app_icon("ai", color="#EDE9FE", accent="#A855F7", size=17)
+        )
+        self.analyze_content_button.setProperty(
+            "secondary",
+            True,
+        )
+        self.analyze_content_button.clicked.connect(
+            lambda: self._start_worker("content")
+        )
+
+        self.content_summary_label = QLabel()
+        self.content_summary_label.hide()
+        self._refresh_content_summary()
+
+        ai_layout.addWidget(self.analyze_content_button)
+        right_layout.addWidget(ai_card)
+        right_layout.addStretch(1)
+
+        self.open_video_button = QPushButton(
+            "Abrir vídeo"
+        )
+        self.open_video_button.setIcon(
+            app_icon("play", color="#EDE9FE", accent="#A855F7", size=15)
+        )
+        self.open_video_button.clicked.connect(
+            self._open_external_video
+        )
+
+        self.open_folder_button = QPushButton(
+            "Abrir pasta"
+        )
+        self.open_folder_button.setIcon(
+            app_icon("folder", color="#EDE9FE", accent="#A855F7", size=15)
+        )
+        self.open_folder_button.clicked.connect(
+            self._open_project_folder
+        )
+
+        open_row = QHBoxLayout()
+        open_row.addWidget(self.open_video_button)
+        open_row.addWidget(self.open_folder_button)
+        right_layout.addLayout(open_row)
+
+        body.addWidget(center, 1)
+        body.addWidget(right_panel)
+        content_layout.addLayout(body, 1)
+
+        # ==============================================================
+        # EXPORT BAR
+        # ==============================================================
+        export_card = card(object_name="ExportCard")
+        export_layout = QHBoxLayout(export_card)
+        export_layout.setContentsMargins(14, 12, 14, 12)
+        export_layout.setSpacing(8)
+
+        export_text = QVBoxLayout()
+        export_text.setSpacing(1)
+        export_text.addWidget(section_title("Qualidade de exportação", "export"))
+        export_text.addWidget(
+            muted_label(
+                "Escolha a resolução final do vídeo."
+            )
+        )
+        export_layout.addLayout(export_text)
+        export_layout.addSpacing(10)
+
+        self.export_combo = QComboBox()
+        for profile in EXPORT_PROFILES:
+            self.export_combo.addItem(
+                profile.label,
+                profile.key,
+            )
+        self.export_combo.hide()
+
+        self.quality_buttons = {}
+        self.quality_group = QButtonGroup(self)
+        self.quality_group.setExclusive(True)
+
+        quality_meta = {
+            "original": ("ORIGINAL", "Fonte"),
+            "1080p": ("FULL HD", "Melhor"),
+            "720p": ("HD", "Leve"),
+            "480p": ("SD", "Menor"),
+            "360p": ("LEVE", "Compacto"),
+        }
+
+        preferred_quality = self.project_data.get(
+            "preferred_export_profile",
+            "original",
+        )
+
+        preferred_index = self.export_combo.findData(
+            preferred_quality
+        )
+        if preferred_index >= 0:
+            self.export_combo.setCurrentIndex(
+                preferred_index
+            )
+
+        for profile in EXPORT_PROFILES:
+            badge, subtitle = quality_meta.get(
+                profile.key,
+                ("VIDEO", ""),
+            )
+            button = QualityCardButton(
+                profile.label,
+                badge,
+                subtitle,
+            )
+            button.setChecked(
+                profile.key == preferred_quality
+            )
+            self.quality_group.addButton(button)
+            self.quality_buttons[profile.key] = button
+            button.clicked.connect(
+                lambda checked=False, key=profile.key:
+                self._select_export_quality(key)
+            )
+            export_layout.addWidget(button)
+
+        export_layout.addStretch(1)
+
+        self.rerender_button = QPushButton(
+            "Salvar e gerar nova prévia"
+        )
+        self.rerender_button.setIcon(
+            app_icon("refresh", color="#EDE9FE", accent="#A855F7", size=16)
+        )
+        self.rerender_button.setProperty("secondary", True)
+        self.rerender_button.setEnabled(False)
+        self.rerender_button.clicked.connect(
+            lambda: self._start_worker("rerender")
+        )
+
+        self.export_button = QPushButton(
+            "Exportar vídeo final"
+        )
+        self.export_button.setIcon(
+            app_icon("export", color="#FFFFFF", accent="#FFFFFF", size=17)
+        )
+        self.export_button.setProperty("primary", True)
+        self.export_button.clicked.connect(
+            lambda: self._start_worker("export")
+        )
+
+        export_layout.addWidget(self.rerender_button)
+        export_layout.addWidget(self.export_button)
+
+        content_layout.addWidget(export_card)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setMaximumHeight(9)
+        content_layout.addWidget(self.progress_bar)
+
+        self.cancel_button = QPushButton(
+            "Cancelar processamento"
+        )
+        self.cancel_button.setIcon(
+            app_icon("delete", color="#F8D5DC", accent="#FF6B81", size=15)
+        )
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(
+            self._cancel_worker
+        )
+        self.cancel_button.setMaximumWidth(190)
+        content_layout.addWidget(
+            self.cancel_button,
+            alignment=Qt.AlignmentFlag.AlignRight,
+        )
+
+        page_scroll = QScrollArea()
+        page_scroll.setObjectName("AppPageScroll")
+        page_scroll.viewport().setObjectName("AppPageViewport")
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setWidget(content)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        page_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        root_layout.addWidget(self.sidebar)
+        root_layout.addWidget(page_scroll, 1)
+        self.setCentralWidget(root)
 
         self.undo_shortcut = QShortcut(
             QKeySequence.StandardKey.Undo,
@@ -425,95 +962,22 @@ class ReviewWindow(QMainWindow):
         )
         self.redo_shortcut.activated.connect(self._redo)
 
-        self.rerender_button = QPushButton(
-            "SALVAR ALTERAÇÕES E GERAR NOVA PRÉVIA"
+        self.captions_checkbox.toggled.connect(
+            self._settings_changed
         )
-        self.rerender_button.setEnabled(False)
-        self.rerender_button.clicked.connect(
-            lambda: self._start_worker("rerender")
+        self.caption_style_combo.currentIndexChanged.connect(
+            self._sync_caption_style_buttons
         )
-
-        self.open_video_button = QPushButton(
-            "ABRIR VÍDEO NO PLAYER DO WINDOWS"
+        self.caption_style_combo.currentIndexChanged.connect(
+            self._settings_changed
         )
-        self.open_video_button.clicked.connect(
-            self._open_external_video
+        self.auto_zoom_checkbox.toggled.connect(
+            self._settings_changed
         )
 
-        self.open_folder_button = QPushButton(
-            "ABRIR PASTA DO PROJETO"
-        )
-        self.open_folder_button.clicked.connect(
-            self._open_project_folder
-        )
-
-        open_controls = QHBoxLayout()
-        open_controls.addWidget(self.open_video_button)
-        open_controls.addWidget(self.open_folder_button)
-
-        export_label = QLabel("Exportação final:")
-
-        self.export_combo = QComboBox()
-        for profile in EXPORT_PROFILES:
-            self.export_combo.addItem(
-                profile.label,
-                profile.key,
-            )
-
-        self.export_button = QPushButton(
-            "EXPORTAR VÍDEO FINAL"
-        )
-        self.export_button.clicked.connect(
-            lambda: self._start_worker("export")
-        )
-
-        export_controls = QHBoxLayout()
-        export_controls.addWidget(export_label)
-        export_controls.addWidget(self.export_combo)
-        export_controls.addWidget(self.export_button)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-
-        self.cancel_button = QPushButton(
-            "Cancelar processamento"
-        )
-        self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(
-            self._cancel_worker
-        )
-
-        self.status_label = QLabel(
-            "Prévia carregada. Revise os cortes."
-        )
-        self.status_label.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        self.status_label.setWordWrap(True)
-
-        layout.addWidget(title)
-        layout.addWidget(self.video_widget, 1)
-        layout.addLayout(player_controls)
-        layout.addWidget(self.summary_label)
-        layout.addLayout(visual_controls)
-        layout.addWidget(self.analyze_content_button)
-        layout.addWidget(self.content_summary_label)
-        layout.addWidget(legend)
-        layout.addLayout(zoom_controls)
-        layout.addWidget(self.timeline_scroll)
-        layout.addWidget(self.selection_label)
-        layout.addLayout(selected_controls)
-        layout.addLayout(range_controls)
-        layout.addLayout(adjust_controls)
-        layout.addLayout(history_controls)
-        layout.addWidget(self.rerender_button)
-        layout.addLayout(open_controls)
-        layout.addLayout(export_controls)
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.cancel_button)
-        layout.addWidget(self.status_label)
-
-        self.setCentralWidget(container)
+        apply_review_theme(self)
+        if not embedded:
+            enable_dark_title_bar(self)
 
         self._load_current_preview()
 
@@ -534,8 +998,67 @@ class ReviewWindow(QMainWindow):
                 cached_thumbnails
             )
 
+        self._sync_aspect_buttons()
+        self._sync_caption_style_buttons()
         self._refresh_summary()
         self._refresh_edit_controls()
+
+    def _sidebar_nav(self, target):
+        if target == "review":
+            return
+
+        if self.host is not None and hasattr(
+            self.host,
+            "_navigate",
+        ):
+            self.player.pause()
+            self.host._navigate(target)
+            return
+
+        parent = self.parent()
+        if parent is not None and hasattr(
+            parent,
+            "_sidebar_nav",
+        ):
+            parent._sidebar_nav(target)
+            self.close()
+            return
+
+        if parent is not None and hasattr(
+            parent,
+            "_navigate",
+        ):
+            self.close()
+            parent._navigate(target)
+
+    def _select_aspect_ratio(self, key):
+        index = self.aspect_combo.findData(key)
+        if index >= 0:
+            self.aspect_combo.setCurrentIndex(index)
+
+    def _sync_aspect_buttons(self, *args):
+        selected = self.aspect_combo.currentData()
+        for key, button in self.aspect_buttons.items():
+            blocked = button.blockSignals(True)
+            button.setChecked(key == selected)
+            button.blockSignals(blocked)
+
+    def _select_caption_style(self, style):
+        index = self.caption_style_combo.findText(style)
+        if index >= 0:
+            self.caption_style_combo.setCurrentIndex(index)
+
+    def _sync_caption_style_buttons(self, *args):
+        selected = self.caption_style_combo.currentText()
+        for key, button in self.caption_style_buttons.items():
+            blocked = button.blockSignals(True)
+            button.setChecked(key == selected)
+            button.blockSignals(blocked)
+
+    def _select_export_quality(self, key):
+        index = self.export_combo.findData(key)
+        if index >= 0:
+            self.export_combo.setCurrentIndex(index)
 
     def _load_current_preview(self):
         path = (
@@ -559,10 +1082,14 @@ class ReviewWindow(QMainWindow):
             == QMediaPlayer.PlaybackState.PlayingState
         ):
             self.player.pause()
-            self.play_button.setText("▶ Reproduzir")
+            self.play_button.setIcon(
+                app_icon("play", color="#FFFFFF", accent="#A855F7", size=18)
+            )
         else:
             self.player.play()
-            self.play_button.setText("⏸ Pausar")
+            self.play_button.setIcon(
+                app_icon("pause", color="#FFFFFF", accent="#A855F7", size=18)
+            )
 
     def _on_duration_changed(self, duration):
         self.position_slider.setRange(
@@ -970,6 +1497,11 @@ class ReviewWindow(QMainWindow):
             for control in controls:
                 control.blockSignals(False)
 
+        if hasattr(self, "aspect_buttons"):
+            self._sync_aspect_buttons()
+        if hasattr(self, "caption_style_buttons"):
+            self._sync_caption_style_buttons()
+
     def _settings_changed(self, *args):
         self.render_settings = (
             self._current_render_settings()
@@ -991,27 +1523,66 @@ class ReviewWindow(QMainWindow):
         analysis = self.content_analysis
 
         if not analysis:
-            self.content_summary_label.setText(
+            text = (
                 "Conteúdo ainda não analisado. "
                 "A análise V1 gera sugestões de hesitação, "
                 "repetição, B-roll e zoom."
             )
+            self.content_summary_label.setText(text)
+
+            if hasattr(self, "ai_hesitation_value"):
+                self.ai_hesitation_value.setText("Aguardando análise")
+                self.ai_repetition_value.setText("Aguardando análise")
+                self.ai_broll_value.setText("Aguardando análise")
+                self.ai_zoom_value.setText("Aguardando análise")
             return
 
         summary = analysis.get(
             "summary",
             {},
         )
+
+        fillers = summary.get("fillers", 0)
+        word_repetitions = summary.get(
+            "word_repetitions",
+            0,
+        )
+        phrase_repetitions = summary.get(
+            "possible_repetitions",
+            0,
+        )
+        broll = summary.get(
+            "broll_suggestions",
+            0,
+        )
+        zooms = summary.get(
+            "zoom_events",
+            0,
+        )
+
         self.content_summary_label.setText(
             "Análise V1 • "
-            f"Hesitações: {summary.get('fillers', 0)} • "
-            "Palavras repetidas: "
-            f"{summary.get('word_repetitions', 0)} • "
-            "Frases repetidas: "
-            f"{summary.get('possible_repetitions', 0)} • "
-            f"B-roll: {summary.get('broll_suggestions', 0)} • "
-            f"Zooms: {summary.get('zoom_events', 0)}"
+            f"Hesitações: {fillers} • "
+            f"Palavras repetidas: {word_repetitions} • "
+            f"Frases repetidas: {phrase_repetitions} • "
+            f"B-roll: {broll} • "
+            f"Zooms: {zooms}"
         )
+
+        if hasattr(self, "ai_hesitation_value"):
+            self.ai_hesitation_value.setText(
+                f"{fillers} ponto(s) para revisar"
+            )
+            self.ai_repetition_value.setText(
+                f"{word_repetitions + phrase_repetitions} "
+                "repetição(ões) provável(is)"
+            )
+            self.ai_broll_value.setText(
+                f"{broll} sugestão(ões) de apoio visual"
+            )
+            self.ai_zoom_value.setText(
+                f"{zooms} momento(s) sugerido(s)"
+            )
 
     def _refresh_summary(self):
         stats = self.plan["stats"]
@@ -1047,11 +1618,28 @@ class ReviewWindow(QMainWindow):
         self.mark_out_button.setEnabled(editing_enabled)
 
         self.aspect_combo.setEnabled(editing_enabled)
+        for button in getattr(
+            self,
+            "aspect_buttons",
+            {},
+        ).values():
+            button.setEnabled(editing_enabled)
+
         self.captions_checkbox.setEnabled(editing_enabled)
-        self.caption_style_combo.setEnabled(
+        caption_style_enabled = (
             editing_enabled
             and self.captions_checkbox.isChecked()
         )
+        self.caption_style_combo.setEnabled(
+            caption_style_enabled
+        )
+        for button in getattr(
+            self,
+            "caption_style_buttons",
+            {},
+        ).values():
+            button.setEnabled(caption_style_enabled)
+
         self.auto_zoom_checkbox.setEnabled(editing_enabled)
         self.analyze_content_button.setEnabled(editing_enabled)
 
@@ -1327,11 +1915,28 @@ class ReviewWindow(QMainWindow):
         self.export_combo.setEnabled(enabled)
         self.zoom_slider.setEnabled(enabled)
         self.aspect_combo.setEnabled(enabled)
+        for button in getattr(
+            self,
+            "aspect_buttons",
+            {},
+        ).values():
+            button.setEnabled(enabled)
+
         self.captions_checkbox.setEnabled(enabled)
-        self.caption_style_combo.setEnabled(
+        caption_style_enabled = (
             enabled
             and self.captions_checkbox.isChecked()
         )
+        self.caption_style_combo.setEnabled(
+            caption_style_enabled
+        )
+        for button in getattr(
+            self,
+            "caption_style_buttons",
+            {},
+        ).values():
+            button.setEnabled(caption_style_enabled)
+
         self.auto_zoom_checkbox.setEnabled(enabled)
         self.analyze_content_button.setEnabled(enabled)
         self.cancel_button.setEnabled(not enabled)

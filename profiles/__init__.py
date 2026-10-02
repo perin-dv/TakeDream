@@ -1,9 +1,12 @@
 from profiles.catalog import (
     EditRules,
     PROFILE_DEFINITIONS,
+    STYLE_PRESETS,
     ProfileDefinition,
+    StylePreset,
     get_edit_rules,
     get_profile_definition,
+    get_style_preset,
     profile_names,
     styles_for_profile,
 )
@@ -20,10 +23,13 @@ def get_youtube_rules(style):
 __all__ = [
     "EditRules",
     "PROFILE_DEFINITIONS",
+    "STYLE_PRESETS",
     "ProfileDefinition",
+    "StylePreset",
     "YouTubeEditRules",
     "get_edit_rules",
     "get_profile_definition",
+    "get_style_preset",
     "get_youtube_rules",
     "profile_names",
     "styles_for_profile",

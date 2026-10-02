@@ -1,9 +1,19 @@
 from pathlib import Path
 
+from core.content_pipeline import (
+    ContentPipeline,
+    load_content_analysis,
+)
 from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
+from core.render_effects import (
+    prepare_caption_file,
+    zoom_events_for_settings,
+)
+from core.render_settings import normalize_render_settings
 from core.results import AUDIO_PATH, load_results
 from core.storage import read_json, write_json
+from core.wedding_assembly import WeddingAssemblyPipeline
 from editor.edit_plan import build_edit_plan, validate_edit_plan
 from media.audio_extractor import wav_duration_ms
 from media.ffmpeg_tools import FFmpegTools
@@ -22,7 +32,7 @@ def _resolve_source(root, project):
 
 
 def _next_output_path(root):
-    output_dir = Path(root) / "output"
+    output_dir = root / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     candidate = output_dir / DEFAULT_OUTPUT_NAME
@@ -35,6 +45,25 @@ def _next_output_path(root):
         if not candidate.exists():
             return candidate
         counter += 1
+
+
+def _real_media_count(manager, root, project):
+    library = manager.load_media_library(root)
+    if isinstance(library, dict):
+        assets = library.get("assets")
+        if isinstance(assets, list) and assets:
+            return len(assets)
+        try:
+            count = int(library.get("media_count", 0) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            return count
+
+    try:
+        return max(1, int(project.get("media_count", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
 
 
 def load_edit_state(project_dir):
@@ -50,9 +79,7 @@ def load_edit_state(project_dir):
         try:
             state["edit_plan"] = validate_edit_plan(read_json(plan_file))
         except ValueError as error:
-            state["edit_errors"].append(
-                f"{EDIT_PLAN_PATH}: {error}"
-            )
+            state["edit_errors"].append(f"{EDIT_PLAN_PATH}: {error}")
 
     try:
         manager = ProjectManager()
@@ -85,6 +112,34 @@ class AutoEditPipeline:
         progress=lambda value: None,
     ):
         root, project = self.manager.load_project(project_dir)
+        media_count = _real_media_count(self.manager, root, project)
+
+        # Casamento com Media Bin usa uma timeline multi-source. A decisão usa
+        # a biblioteca real e não apenas o campo media_count do project.json,
+        # pois projetos antigos/stale podiam voltar ao pipeline de uma única
+        # mídia e renderizar só ~20-30 segundos do primeiro arquivo.
+        if project.get("profile") == "Casamento" and media_count > 1:
+            if int(project.get("media_count", 1) or 1) != media_count:
+                self.manager.update_processing(
+                    root,
+                    project.get("status", "created"),
+                    media_count=media_count,
+                )
+                _, project = self.manager.load_project(root)
+
+            stage(
+                f"Preparando montagem multi-vídeo do casamento com {media_count} mídias..."
+            )
+            progress(1)
+            return WeddingAssemblyPipeline(
+                manager=self.manager,
+                tools=self.tools,
+            ).run(
+                root,
+                cancel=cancel,
+                stage=stage,
+                progress=progress,
+            )
 
         stage("Validando transcrição e silêncios...")
         progress(-1)
@@ -135,9 +190,7 @@ class AutoEditPipeline:
 
             metadata = self.manager.load_media_metadata(root)
             if metadata:
-                source_seconds = metadata.get("container", {}).get(
-                    "duration_seconds"
-                )
+                source_seconds = metadata.get("container", {}).get("duration_seconds")
                 if isinstance(source_seconds, (int, float)) and source_seconds > 0:
                     duration_ms = min(
                         audio_duration_ms,
@@ -176,26 +229,70 @@ class AutoEditPipeline:
 
         source = _resolve_source(root, project)
         if not source.exists():
-            raise ProcessingError(
-                "O vídeo original não foi encontrado para renderização."
+            raise ProcessingError("O vídeo original não foi encontrado para renderização.")
+
+        settings = normalize_render_settings(
+            project.get("review_settings"),
+            project,
+        )
+
+        if settings["auto_zoom"] and load_content_analysis(root) is None:
+            stage("Analisando conteúdo para aplicar o estilo...")
+
+            def content_progress(value):
+                if value < 0:
+                    progress(-1)
+                else:
+                    progress(15 + int(min(100, value) * 0.20))
+
+            ContentPipeline(
+                manager=self.manager,
+                tools=self.tools,
+            ).run(
+                root,
+                cancel=cancel,
+                stage=stage,
+                progress=content_progress,
             )
+
+        check_cancelled(cancel)
+
+        caption_file = prepare_caption_file(
+            root,
+            project,
+            plan,
+            settings,
+            self.tools,
+            source,
+        )
+        zoom_events = zoom_events_for_settings(root, settings)
 
         destination = _next_output_path(root)
 
         stage(
-            f"Renderizando {plan['stats']['cuts']} cortes automáticos..."
+            f"Renderizando {plan['stats']['cuts']} cortes "
+            f"com o estilo {project.get('style', 'selecionado')}..."
         )
-        progress(-1)
+        progress(35)
+
+        def render_progress(value):
+            if value < 0:
+                progress(-1)
+            else:
+                progress(35 + int(min(100, value) * 0.65))
 
         rendered = self.renderer.render(
             source,
             destination,
             plan,
             cancel=cancel,
-            target_aspect_ratio=project.get(
-                "aspect_ratio"
-            ),
-            progress=progress,
+            target_aspect_ratio=settings["aspect_ratio"],
+            caption_file=caption_file,
+            zoom_events=zoom_events,
+            smart_reframe=settings["smart_reframe"],
+            focus_region=settings["focus_region"],
+            audio_settings=settings["audio_settings"],
+            progress=render_progress,
             stage=stage,
         )
 
@@ -216,6 +313,7 @@ class AutoEditPipeline:
                 "label",
                 "Desconhecido",
             ),
+            review_settings=settings,
         )
 
         progress(100)
@@ -227,7 +325,12 @@ class AutoEditPipeline:
                 "output_path": relative_output,
                 "edit_errors": [],
                 "reused_output": False,
-                "render_encoder": getattr(getattr(self.renderer, "last_encoder", None), "label", "Desconhecido"),
+                "render_encoder": getattr(
+                    getattr(self.renderer, "last_encoder", None),
+                    "label",
+                    "Desconhecido",
+                ),
+                "review_settings": settings,
             }
         )
         return results

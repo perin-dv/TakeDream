@@ -1,26 +1,56 @@
-from PySide6.QtCore import Qt, QTimer
+from pathlib import Path
+
+from PySide6.QtCore import QSize, QTimer, QUrl, Qt
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from app.processing_worker import ProcessingWorker
+from app.ui.components import (
+    card,
+    muted_label,
+    section_title,
+)
+from app.ui.icons import app_icon, icon_pixmap
+from app.ui.shell import TakeDreamSidebar
+from app.ui.theme import apply_app_theme
+from app.ui.windows import enable_dark_title_bar
 from app.windows.review_window import ReviewWindow
 from core.project_manager import ProjectManager
 from media.ffmpeg_tools import FFmpegTools
 
 
 class ProjectWindow(QMainWindow):
-    def __init__(self, project_dir, parent=None):
+    def __init__(
+        self,
+        project_dir,
+        parent=None,
+        *,
+        embedded=False,
+        host=None,
+    ):
         super().__init__(parent)
+
+        self.embedded = embedded
+        self.host = host
+
+        if embedded:
+            self.setWindowFlags(
+                Qt.WindowType.Widget
+            )
 
         self.project_manager = ProjectManager()
         self.ffmpeg_tools = FFmpegTools()
@@ -31,18 +61,57 @@ class ProjectWindow(QMainWindow):
         self._current_mode = None
         self.review_windows = []
 
-        self.project_dir, self.project_data = self.project_manager.load_project(
-            project_dir
+        self.project_dir, self.project_data = (
+            self.project_manager.load_project(project_dir)
         )
 
-        self.setWindowTitle(f"TakeDream — {self.project_data['name']}")
-        self.resize(920, 700)
+        self.setWindowTitle(
+            f"TakeDream — {self.project_data['name']}"
+        )
+        self.resize(1380, 850)
+        self.setMinimumSize(1100, 700)
 
-        container = QWidget()
-        main_layout = QVBoxLayout(container)
+        root = QWidget()
+        root.setObjectName("Root")
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        header = QLabel(self.project_data["name"])
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.sidebar = TakeDreamSidebar("projects")
+        self.sidebar.navigate.connect(self._sidebar_nav)
+        root_layout.addWidget(self.sidebar)
+
+        content = QWidget()
+        content.setObjectName("AppPage")
+        content.setMinimumWidth(1030)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(22, 20, 22, 18)
+        content_layout.setSpacing(14)
+
+        # --------------------------------------------------------------
+        # HEADER
+        # --------------------------------------------------------------
+        header = QHBoxLayout()
+
+        icon = QLabel()
+        icon.setFixedSize(44, 44)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setPixmap(
+            icon_pixmap(
+                "brand",
+                color="#FFFFFF",
+                accent="#C084FC",
+                size=32,
+            )
+        )
+        icon.setStyleSheet(
+            "background:#6D28D9; border-radius:22px;"
+        )
+
+        header_text = QVBoxLayout()
+        header_text.setSpacing(0)
+        project_title = QLabel(self.project_data["name"])
+        project_title.setObjectName("PageTitle")
 
         profile_text = (
             f"{self.project_data.get('profile', '—')}  •  "
@@ -50,100 +119,445 @@ class ProjectWindow(QMainWindow):
             f"{self.project_data.get('aspect_ratio', '16:9')}"
         )
         profile_label = QLabel(profile_text)
-        profile_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        profile_label.setObjectName("PageSubtitle")
 
-        source_name = self.project_data.get("source", {}).get("filename", "—")
-        self.source_label = QLabel(source_name)
-        self.source_label.setWordWrap(True)
+        header_text.addWidget(project_title)
+        header_text.addWidget(profile_label)
 
-        info_frame = QFrame()
-        info_layout = QFormLayout(info_frame)
+        header.addWidget(icon)
+        header.addSpacing(8)
+        header.addLayout(header_text)
+        header.addStretch(1)
 
-        self.duration_value = QLabel("Ainda não analisado")
-        self.resolution_value = QLabel("—")
-        self.fps_value = QLabel("—")
-        self.video_codec_value = QLabel("—")
-        self.audio_codec_value = QLabel("—")
-        self.audio_value = QLabel("—")
-        self.ffmpeg_value = QLabel("Verificando...")
-
-        info_layout.addRow("Arquivo:", self.source_label)
-        info_layout.addRow("Duração:", self.duration_value)
-        info_layout.addRow("Resolução:", self.resolution_value)
-        info_layout.addRow("FPS:", self.fps_value)
-        info_layout.addRow("Codec de vídeo:", self.video_codec_value)
-        info_layout.addRow("Áudio:", self.audio_value)
-        info_layout.addRow("Codec de áudio:", self.audio_codec_value)
-        info_layout.addRow("FFmpeg / FFprobe:", self.ffmpeg_value)
-
-        self.status_label = QLabel("Pronto para analisar o vídeo.")
+        self.status_label = QLabel(
+            "Preparando o projeto..."
+        )
+        self.status_label.setProperty("muted", True)
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setMaximumWidth(390)
+        self.status_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+        header.addWidget(self.status_label)
 
-        self.analyze_button = QPushButton("ANALISAR VÍDEO")
-        self.analyze_button.clicked.connect(self.analyze_media)
+        content_layout.addLayout(header)
 
-        self.process_button = QPushButton("PROCESSAR ÁUDIO E TRANSCREVER")
+        # --------------------------------------------------------------
+        # MAIN BODY
+        # --------------------------------------------------------------
+        body = QHBoxLayout()
+        body.setSpacing(12)
+
+        # Preview / media information.
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(10)
+
+        preview_card = card(object_name="PlayerCard")
+        preview_layout = QVBoxLayout(preview_card)
+        preview_layout.setContentsMargins(12, 12, 12, 12)
+        preview_layout.setSpacing(8)
+
+        preview_header = QHBoxLayout()
+        preview_header.addWidget(
+            section_title("Vídeo do projeto", "preview")
+        )
+        preview_header.addStretch(1)
+        aspect_badge = QLabel(
+            self.project_data.get(
+                "aspect_ratio",
+                "16:9",
+            )
+        )
+        aspect_badge.setStyleSheet(
+            "background:#241C52; border:1px solid #7C5CE7;"
+            "border-radius:8px; padding:5px 9px; font-weight:800;"
+        )
+        preview_header.addWidget(aspect_badge)
+        preview_layout.addLayout(preview_header)
+
+        self.video_widget = QVideoWidget()
+        self.video_widget.setMinimumHeight(330)
+        self.video_widget.setStyleSheet(
+            "background:#050814; border-radius:10px;"
+        )
+
+        self.audio_output = QAudioOutput(self)
+        self.audio_output.setVolume(0.55)
+
+        self.player = QMediaPlayer(self)
+        self.player.setAudioOutput(self.audio_output)
+        self.player.setVideoOutput(self.video_widget)
+
+        source_path = Path(
+            self.project_data.get(
+                "source",
+                {},
+            ).get("original_path", "")
+        )
+        if source_path.exists():
+            self.player.setSource(
+                QUrl.fromLocalFile(
+                    str(source_path.resolve())
+                )
+            )
+
+        preview_controls = QHBoxLayout()
+        self.preview_play_button = QPushButton("Reproduzir")
+        self.preview_play_button.setIcon(app_icon("play", color="#EDE9FE", accent="#A855F7", size=17))
+        self.preview_play_button.clicked.connect(
+            self._toggle_preview
+        )
+        preview_controls.addWidget(
+            self.preview_play_button
+        )
+        preview_controls.addStretch(1)
+
+        self.source_label = QLabel(
+            self.project_data.get(
+                "source",
+                {},
+            ).get("filename", "—")
+        )
+        self.source_label.setProperty("muted", True)
+        self.source_label.setWordWrap(True)
+        preview_controls.addWidget(self.source_label)
+
+        preview_layout.addWidget(self.video_widget, 1)
+        preview_layout.addLayout(preview_controls)
+        left_layout.addWidget(preview_card, 2)
+
+        info_card = card()
+        info_layout = QGridLayout(info_card)
+        info_layout.setContentsMargins(14, 12, 14, 12)
+        info_layout.setHorizontalSpacing(12)
+        info_layout.setVerticalSpacing(9)
+
+        self.duration_value = self._metric_value("Ainda não analisado")
+        self.resolution_value = self._metric_value("—")
+        self.fps_value = self._metric_value("—")
+        self.video_codec_value = self._metric_value("—")
+        self.audio_codec_value = self._metric_value("—")
+        self.audio_value = self._metric_value("—")
+        self.ffmpeg_value = self._metric_value("Verificando...")
+
+        metrics = (
+            ("Duração", self.duration_value),
+            ("Resolução", self.resolution_value),
+            ("FPS", self.fps_value),
+            ("Vídeo", self.video_codec_value),
+            ("Áudio", self.audio_value),
+            ("Codec áudio", self.audio_codec_value),
+            ("FFmpeg", self.ffmpeg_value),
+        )
+
+        for index, (name, value) in enumerate(metrics):
+            row = index // 4
+            column = index % 4
+
+            metric = QFrame()
+            metric.setStyleSheet(
+                "background:#171F3D; border:1px solid #2B3762;"
+                "border-radius:10px;"
+            )
+            metric_layout = QVBoxLayout(metric)
+            metric_layout.setContentsMargins(10, 8, 10, 8)
+            metric_layout.setSpacing(1)
+
+            label = QLabel(name)
+            label.setProperty("muted", True)
+            metric_layout.addWidget(label)
+            metric_layout.addWidget(value)
+            info_layout.addWidget(metric, row, column)
+
+        left_layout.addWidget(info_card)
+
+        # Pipeline.
+        right = QWidget()
+        right.setFixedWidth(430)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
+
+        pipeline_card = card()
+        pipeline_layout = QVBoxLayout(pipeline_card)
+        pipeline_layout.setContentsMargins(14, 14, 14, 14)
+        pipeline_layout.setSpacing(10)
+
+        pipeline_layout.addWidget(
+            section_title("Fluxo do projeto", "sparkles")
+        )
+        pipeline_layout.addWidget(
+            muted_label(
+                "Do vídeo bruto à revisão em quatro etapas.",
+                True,
+            )
+        )
+
+        self.analyze_button = self._pipeline_button(
+            "1",
+            "Analisar vídeo",
+            "Lê resolução, FPS, codecs e duração.",
+        )
+        self.analyze_button.clicked.connect(
+            self.analyze_media
+        )
+
+        self.process_button = self._pipeline_button(
+            "2",
+            "Transcrever e analisar áudio",
+            "Extrai WAV, transcreve e encontra silêncios.",
+        )
         self.process_button.clicked.connect(
             lambda: self._start_worker("process")
         )
 
-        self.edit_button = QPushButton("GERAR PRIMEIRA EDIÇÃO AUTOMÁTICA")
+        self.edit_button = self._pipeline_button(
+            "3",
+            "Gerar primeira edição",
+            "Cria o plano de cortes e renderiza a prévia.",
+        )
         self.edit_button.setEnabled(False)
         self.edit_button.clicked.connect(
             lambda: self._start_worker("edit")
         )
 
-        self.review_button = QPushButton("REVISAR EDIÇÃO NA LINHA DO TEMPO")
+        self.review_button = self._pipeline_button(
+            "4",
+            "Revisar na linha do tempo",
+            "Ajuste cortes, legenda, formato, zoom e exportação.",
+            primary=True,
+        )
         self.review_button.setEnabled(False)
-        self.review_button.clicked.connect(self.open_review)
+        self.review_button.clicked.connect(
+            self.open_review
+        )
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
+        for button in (
+            self.analyze_button,
+            self.process_button,
+            self.edit_button,
+            self.review_button,
+        ):
+            pipeline_layout.addWidget(button)
 
-        self.result_label = QLabel("Transcrição: ainda não processada")
+        right_layout.addWidget(pipeline_card)
+
+        results_card = card()
+        results_layout = QVBoxLayout(results_card)
+        results_layout.setContentsMargins(14, 12, 14, 12)
+        results_layout.setSpacing(7)
+        results_layout.addWidget(
+            section_title("Resultado do processamento", "ai")
+        )
+
+        self.result_label = QLabel(
+            "Transcrição: ainda não processada"
+        )
+        self.result_label.setProperty("muted", True)
         self.result_label.setWordWrap(True)
-        self.result_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.result_label.setTextFormat(
+            Qt.TextFormat.PlainText
+        )
 
         self.edit_result_label = QLabel(
             "Edição automática: aguardando transcrição e silêncios."
         )
+        self.edit_result_label.setProperty("muted", True)
         self.edit_result_label.setWordWrap(True)
-        self.edit_result_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.edit_result_label.setTextFormat(
+            Qt.TextFormat.PlainText
+        )
 
-        self.cancel_button = QPushButton("Cancelar processamento")
+        results_layout.addWidget(self.result_label)
+        results_layout.addWidget(self.edit_result_label)
+        right_layout.addWidget(results_card, 1)
+
+        body.addWidget(left, 1)
+        body.addWidget(right)
+        content_layout.addLayout(body, 1)
+
+        # --------------------------------------------------------------
+        # FOOTER / PROGRESS
+        # --------------------------------------------------------------
+        footer_card = card(object_name="ExportCard")
+        footer = QHBoxLayout(footer_card)
+        footer.setContentsMargins(14, 11, 14, 11)
+        footer.setSpacing(10)
+
+        progress_text = QVBoxLayout()
+        progress_text.setSpacing(2)
+        progress_text.addWidget(
+            section_title("Processamento", "settings")
+        )
+        progress_text.addWidget(
+            muted_label(
+                "Acompanhe o progresso sem travar a interface."
+            )
+        )
+        footer.addLayout(progress_text)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setMinimumWidth(320)
+        footer.addWidget(self.progress_bar, 1)
+
+        self.cancel_button = QPushButton(
+            "Cancelar"
+        )
+        self.cancel_button.setIcon(
+            app_icon("delete", color="#F8D5DC", accent="#FF6B81", size=15)
+        )
         self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(self._cancel_processing)
+        self.cancel_button.clicked.connect(
+            self._cancel_processing
+        )
+        footer.addWidget(self.cancel_button)
 
-        close_button = QPushButton("Fechar Projeto")
-        close_button.clicked.connect(self.close)
+        close_button = QPushButton(
+            "Voltar ao dashboard"
+        )
+        close_button.setIcon(
+            app_icon("home", color="#EDE9FE", accent="#A855F7", size=16)
+        )
+        close_button.clicked.connect(
+            self._go_home
+        )
+        footer.addWidget(close_button)
 
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.analyze_button)
-        buttons.addWidget(close_button)
+        content_layout.addWidget(footer_card)
 
-        main_layout.addWidget(header)
-        main_layout.addWidget(profile_label)
-        main_layout.addSpacing(20)
-        main_layout.addWidget(info_frame)
-        main_layout.addSpacing(20)
-        main_layout.addWidget(self.result_label)
-        main_layout.addWidget(self.edit_result_label)
-        main_layout.addSpacing(10)
-        main_layout.addWidget(self.process_button)
-        main_layout.addWidget(self.edit_button)
-        main_layout.addWidget(self.review_button)
-        main_layout.addWidget(self.progress_bar)
-        main_layout.addWidget(self.cancel_button)
-        main_layout.addWidget(self.status_label)
-        main_layout.addLayout(buttons)
+        page_scroll = QScrollArea()
+        page_scroll.setObjectName("AppPageScroll")
+        page_scroll.viewport().setObjectName("AppPageViewport")
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setWidget(content)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        page_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
 
-        self.setCentralWidget(container)
+        root_layout.addWidget(page_scroll, 1)
+        self.setCentralWidget(root)
+
+        apply_app_theme(self)
+        if not embedded:
+            enable_dark_title_bar(self)
 
         self._update_ffmpeg_status()
         self._load_saved_metadata()
-        QTimer.singleShot(0, lambda: self._start_worker("load"))
+        QTimer.singleShot(
+            0,
+            lambda: self._start_worker("load"),
+        )
+
+    def _metric_value(self, text):
+        label = QLabel(text)
+        label.setStyleSheet(
+            "font-size:14px; font-weight:800; color:#FFFFFF;"
+        )
+        return label
+
+    def _pipeline_button(
+        self,
+        number,
+        title,
+        description,
+        primary=False,
+    ):
+        icon_names = {
+            "1": "preview",
+            "2": "podcast",
+            "3": "scissors",
+            "4": "review",
+        }
+        button = QPushButton(
+            f"{title}\n{description}"
+        )
+        button.setIcon(
+            app_icon(
+                icon_names.get(str(number), "sparkles"),
+                color="#F4EEFF",
+                accent="#A855F7",
+                size=23,
+            )
+        )
+        button.setIconSize(QSize(23, 23))
+        button.setMinimumHeight(70)
+        button.setProperty("pipeline", True)
+        button.setProperty("stepNumber", str(number))
+        if primary:
+            button.setProperty("primary", True)
+        return button
+
+    def _toggle_preview(self):
+        if (
+            self.player.playbackState()
+            == QMediaPlayer.PlaybackState.PlayingState
+        ):
+            self.player.pause()
+            self.preview_play_button.setText(
+                "Reproduzir"
+            )
+            self.preview_play_button.setIcon(
+                app_icon("play", color="#EDE9FE", accent="#A855F7", size=17)
+            )
+        else:
+            self.player.play()
+            self.preview_play_button.setText(
+                "Pausar"
+            )
+            self.preview_play_button.setIcon(
+                app_icon("pause", color="#EDE9FE", accent="#A855F7", size=17)
+            )
+
+    def _sidebar_nav(self, target):
+        if target == "review":
+            self.open_review()
+            return
+
+        if self.host is not None and hasattr(
+            self.host,
+            "_navigate",
+        ):
+            self.player.stop()
+            self.host._navigate(target)
+            return
+
+        parent = self.parent()
+        if parent is not None and hasattr(
+            parent,
+            "_navigate",
+        ):
+            if target == "new":
+                self.close()
+                parent.create_project()
+            elif target in (
+                "home",
+                "projects",
+                "exports",
+                "settings",
+            ):
+                self.close()
+                parent._navigate(target)
+
+    def _go_home(self):
+        self.player.stop()
+
+        if self.host is not None and hasattr(
+            self.host,
+            "_navigate",
+        ):
+            self.host._navigate("home")
+            return
+
+        self.close()
 
     def analyze_media(self):
         self._start_worker("analyze")
@@ -344,8 +758,18 @@ class ProjectWindow(QMainWindow):
         if not self._can_review:
             return
 
+        if self.host is not None and hasattr(
+            self.host,
+            "_show_review_page",
+        ):
+            self.player.pause()
+            self.host._show_review_page(
+                self.project_dir
+            )
+            return
+
         try:
-            window = ReviewWindow(self.project_dir)
+            window = ReviewWindow(self.project_dir, self)
         except ValueError as error:
             QMessageBox.warning(
                 self,

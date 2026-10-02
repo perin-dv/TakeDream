@@ -12,6 +12,7 @@ from editor.edit_plan import (
     validate_edit_plan,
 )
 from media.process import run_media_progress
+from renderer.audio import audio_filter_chain
 from renderer.formats import (
     crop_dimensions,
     even,
@@ -22,6 +23,10 @@ from renderer.hardware import (
     cpu_encoder_args,
     hardware_encoder_args,
     select_h264_encoder,
+)
+from renderer.reframe import (
+    smart_crop_box,
+    zoom_crop_origin,
 )
 
 
@@ -41,33 +46,17 @@ def _visual_slices(edit_plan, zoom_events=None):
         start = segment["start_ms"]
         end = segment["end_ms"]
         boundaries = {start, end}
-
         overlapping = []
 
         for event in zoom_events:
             try:
-                zoom_start = max(
-                    start,
-                    int(event["start_ms"]),
-                )
-                zoom_end = min(
-                    end,
-                    int(event["end_ms"]),
-                )
-                scale = float(
-                    event.get("scale", 1.0)
-                )
-            except (
-                KeyError,
-                TypeError,
-                ValueError,
-            ):
+                zoom_start = max(start, int(event["start_ms"]))
+                zoom_end = min(end, int(event["end_ms"]))
+                scale = float(event.get("scale", 1.0))
+            except (KeyError, TypeError, ValueError):
                 continue
 
-            if (
-                zoom_end <= zoom_start
-                or scale <= 1.0
-            ):
+            if zoom_end <= zoom_start or scale <= 1.0:
                 continue
 
             boundaries.add(zoom_start)
@@ -89,25 +78,12 @@ def _visual_slices(edit_plan, zoom_events=None):
             if part_end <= part_start:
                 continue
 
-            midpoint = int(
-                (part_start + part_end) / 2
-            )
+            midpoint = int((part_start + part_end) / 2)
             factor = 1.0
 
-            for (
-                zoom_start,
-                zoom_end,
-                scale,
-            ) in overlapping:
-                if (
-                    zoom_start
-                    <= midpoint
-                    < zoom_end
-                ):
-                    factor = max(
-                        factor,
-                        scale,
-                    )
+            for zoom_start, zoom_end, scale in overlapping:
+                if zoom_start <= midpoint < zoom_end:
+                    factor = max(factor, scale)
 
             slices.append(
                 {
@@ -138,6 +114,9 @@ def build_filter_graph(
     output_size=None,
     zoom_events=None,
     caption_file=None,
+    smart_reframe=True,
+    focus_region=None,
+    audio_settings=None,
 ):
     validate_edit_plan(edit_plan)
 
@@ -155,7 +134,6 @@ def build_filter_graph(
     for index, segment in enumerate(slices):
         start = _seconds(segment["start_ms"])
         end = _seconds(segment["end_ms"])
-
         video_filters = [
             f"trim=start={start}:end={end}",
             "setpts=PTS-STARTPTS",
@@ -166,29 +144,44 @@ def build_filter_graph(
             and type(source_width) is int
             and type(source_height) is int
         ):
-            zoom_width = even(
-                source_width
-                * segment["zoom"]
-            )
-            zoom_height = even(
-                source_height
-                * segment["zoom"]
-            )
+            zoom_width = even(source_width * segment["zoom"])
+            zoom_height = even(source_height * segment["zoom"])
+
+            if smart_reframe:
+                zoom_x, zoom_y = zoom_crop_origin(
+                    zoom_width,
+                    zoom_height,
+                    source_width,
+                    source_height,
+                    focus_region=focus_region,
+                )
+                crop_position = f"{zoom_x}:{zoom_y}"
+            else:
+                crop_position = (
+                    f"(iw-{source_width})/2:"
+                    f"(ih-{source_height})/2"
+                )
+
             video_filters.extend(
                 [
                     (
                         f"scale={zoom_width}:"
-                        f"{zoom_height}:"
-                        "flags=lanczos"
+                        f"{zoom_height}:flags=lanczos"
                     ),
                     (
                         f"crop={source_width}:"
                         f"{source_height}:"
-                        f"(iw-{source_width})/2:"
-                        f"(ih-{source_height})/2"
+                        f"{crop_position}"
                     ),
                 ]
             )
+
+        # O filtro scale pode alterar o sample aspect ratio (SAR) quando as
+        # dimensões arredondadas do punch zoom não mantêm exatamente a mesma
+        # proporção do frame de origem. O concat exige parâmetros idênticos
+        # entre todos os trechos, então normalizamos cada slice para pixels
+        # quadrados antes de concatenar.
+        video_filters.append("setsar=1")
 
         filters.append(
             "[0:v:0]"
@@ -216,32 +209,35 @@ def build_filter_graph(
         and not target_aspect_ratio
     )
     has_captions = caption_file is not None
-
-    if not any(
+    audio_chain = audio_filter_chain(audio_settings)
+    has_audio_treatment = audio_chain is not None
+    has_video_treatment = any(
         (
             has_aspect_transform,
             has_output_size,
             has_simple_height_scale,
             has_captions,
         )
-    ):
+    )
+
+    if not has_video_treatment and not has_audio_treatment:
         filters.append(
             f"{inputs}concat=n={len(slices)}:"
             "v=1:a=1[outv][outa]"
         )
         return ";\n".join(filters)
 
-    filters.append(
-        f"{inputs}concat=n={len(slices)}:"
-        "v=1:a=1[joinedv][outa]"
-    )
-
     if (
         has_simple_height_scale
         and not has_aspect_transform
         and not has_output_size
         and not has_captions
+        and not has_audio_treatment
     ):
+        filters.append(
+            f"{inputs}concat=n={len(slices)}:"
+            "v=1:a=1[joinedv][outa]"
+        )
         filters.append(
             "[joinedv]"
             f"scale=-2:{int(output_height)}:"
@@ -249,85 +245,94 @@ def build_filter_graph(
         )
         return ";\n".join(filters)
 
-    current = "joinedv"
-    stage_index = 0
+    video_label = "joinedv" if has_video_treatment else "outv"
+    audio_label = "joineda" if has_audio_treatment else "outa"
+    filters.append(
+        f"{inputs}concat=n={len(slices)}:"
+        f"v=1:a=1[{video_label}][{audio_label}]"
+    )
 
-    if (
-        target_aspect_ratio
-        and type(source_width) is int
-        and type(source_height) is int
-    ):
-        crop_width, crop_height = crop_dimensions(
-            source_width,
-            source_height,
-            target_aspect_ratio,
-        )
+    if has_video_treatment:
+        current = "joinedv"
+        stage_index = 0
 
-        if (
-            crop_width != source_width
-            or crop_height != source_height
-        ):
-            next_label = (
-                f"stagev{stage_index}"
+        if has_aspect_transform:
+            crop_width, crop_height = crop_dimensions(
+                source_width,
+                source_height,
+                target_aspect_ratio,
             )
-            stage_index += 1
 
+            if (
+                crop_width != source_width
+                or crop_height != source_height
+            ):
+                next_label = f"stagev{stage_index}"
+                stage_index += 1
+
+                if smart_reframe:
+                    crop = smart_crop_box(
+                        source_width,
+                        source_height,
+                        target_aspect_ratio,
+                        focus_region=focus_region,
+                    )
+                    crop_x = crop["x"]
+                    crop_y = crop["y"]
+                else:
+                    crop_x = f"(iw-{crop_width})/2"
+                    crop_y = f"(ih-{crop_height})/2"
+
+                filters.append(
+                    f"[{current}]"
+                    f"crop={crop_width}:"
+                    f"{crop_height}:"
+                    f"{crop_x}:{crop_y}"
+                    f"[{next_label}]"
+                )
+                current = next_label
+
+        if output_size is not None:
+            target_width, target_height = output_size
+            next_label = f"stagev{stage_index}"
+            stage_index += 1
             filters.append(
                 f"[{current}]"
-                f"crop={crop_width}:"
-                f"{crop_height}:"
-                f"(iw-{crop_width})/2:"
-                f"(ih-{crop_height})/2"
+                f"scale={int(target_width)}:"
+                f"{int(target_height)}:"
+                "flags=lanczos"
                 f"[{next_label}]"
             )
             current = next_label
 
-    if output_size is not None:
-        target_width, target_height = output_size
-        next_label = f"stagev{stage_index}"
-        stage_index += 1
+        elif has_simple_height_scale:
+            next_label = f"stagev{stage_index}"
+            stage_index += 1
+            filters.append(
+                f"[{current}]"
+                f"scale=-2:{int(output_height)}:"
+                "flags=lanczos"
+                f"[{next_label}]"
+            )
+            current = next_label
 
+        if caption_file is not None:
+            next_label = f"stagev{stage_index}"
+            stage_index += 1
+            path = _filter_path(caption_file)
+            filters.append(
+                f"[{current}]"
+                f"ass=filename='{path}'"
+                f"[{next_label}]"
+            )
+            current = next_label
+
+        filters.append(f"[{current}]null[outv]")
+
+    if has_audio_treatment:
         filters.append(
-            f"[{current}]"
-            f"scale={int(target_width)}:"
-            f"{int(target_height)}:"
-            "flags=lanczos"
-            f"[{next_label}]"
+            f"[joineda]{audio_chain}[outa]"
         )
-        current = next_label
-
-    elif (
-        output_height is not None
-        and not target_aspect_ratio
-    ):
-        next_label = f"stagev{stage_index}"
-        stage_index += 1
-
-        filters.append(
-            f"[{current}]"
-            f"scale=-2:{int(output_height)}:"
-            "flags=lanczos"
-            f"[{next_label}]"
-        )
-        current = next_label
-
-    if caption_file is not None:
-        next_label = f"stagev{stage_index}"
-        stage_index += 1
-        path = _filter_path(
-            caption_file
-        )
-
-        filters.append(
-            f"[{current}]"
-            f"ass=filename='{path}'"
-            f"[{next_label}]"
-        )
-        current = next_label
-
-    filters.append(
-        f"[{current}]null[outv]"
-    )
 
     return ";\n".join(filters)
 
@@ -386,6 +391,9 @@ class FFmpegRenderer:
         target_aspect_ratio=None,
         caption_file=None,
         zoom_events=None,
+        smart_reframe=True,
+        focus_region=None,
+        audio_settings=None,
         crf=20,
         audio_bitrate="192k",
         preset="veryfast",
@@ -401,12 +409,8 @@ class FFmpegRenderer:
                 "FFmpeg não encontrado. Instale o FFmpeg e adicione-o ao PATH."
             )
 
-        source = Path(
-            source
-        ).expanduser().resolve()
-        destination = Path(
-            destination
-        ).expanduser().resolve()
+        source = Path(source).expanduser().resolve()
+        destination = Path(destination).expanduser().resolve()
 
         if not source.exists():
             raise ProcessingError(
@@ -427,14 +431,8 @@ class FFmpegRenderer:
                 "A edição automática exige vídeo com faixa de áudio."
             )
 
-        source_width = metadata.get(
-            "video",
-            {},
-        ).get("width")
-        source_height = metadata.get(
-            "video",
-            {},
-        ).get("height")
+        source_width = metadata.get("video", {}).get("width")
+        source_height = metadata.get("video", {}).get("height")
 
         if (
             type(source_width) is not int
@@ -455,18 +453,13 @@ class FFmpegRenderer:
                 target_aspect_ratio,
                 short_side=output_height,
             )
-
         elif (
             type(output_height) is int
             and output_height > 0
             and source_height > output_height
         ):
             output_size = (
-                even(
-                    source_width
-                    * output_height
-                    / source_height
-                ),
+                even(source_width * output_height / source_height),
                 even(output_height),
             )
 
@@ -503,15 +496,11 @@ class FFmpegRenderer:
             dir=destination.parent,
         )
         os.close(output_fd)
-        Path(temporary_output).unlink(
-            missing_ok=True
-        )
+        Path(temporary_output).unlink(missing_ok=True)
 
-        expected_duration_ms = (
-            edit_plan["stats"][
-                "estimated_duration_ms"
-            ]
-        )
+        expected_duration_ms = edit_plan["stats"][
+            "estimated_duration_ms"
+        ]
 
         try:
             Path(script_path).write_text(
@@ -519,12 +508,13 @@ class FFmpegRenderer:
                     edit_plan,
                     source_width=source_width,
                     source_height=source_height,
-                    target_aspect_ratio=(
-                        target_aspect_ratio
-                    ),
+                    target_aspect_ratio=target_aspect_ratio,
                     output_size=output_size,
                     zoom_events=zoom_events,
                     caption_file=caption_file,
+                    smart_reframe=smart_reframe,
+                    focus_region=focus_region,
+                    audio_settings=audio_settings,
                 ),
                 encoding="utf-8",
             )
@@ -552,9 +542,7 @@ class FFmpegRenderer:
                     preset=preset,
                     quality=crf,
                 )
-                stage(
-                    "Renderizando pela CPU..."
-                )
+                stage("Renderizando pela CPU...")
 
             command = _render_command(
                 self.tools.ffmpeg_path,
@@ -573,19 +561,13 @@ class FFmpegRenderer:
                     cancel=cancel,
                 )
                 self.last_encoder = encoder
-
             except ProcessingCancelled:
                 raise
-
             except ProcessingError:
                 if not encoder.hardware:
                     raise
 
-                Path(
-                    temporary_output
-                ).unlink(
-                    missing_ok=True
-                )
+                Path(temporary_output).unlink(missing_ok=True)
                 progress(0)
                 stage(
                     f"{encoder.label} falhou neste vídeo. "
@@ -611,37 +593,24 @@ class FFmpegRenderer:
                     progress=progress,
                     cancel=cancel,
                 )
-                self.last_encoder = (
-                    CPU_ENCODER
-                )
+                self.last_encoder = CPU_ENCODER
 
             check_cancelled(cancel)
 
             if (
-                not Path(
-                    temporary_output
-                ).exists()
-                or Path(
-                    temporary_output
-                ).stat().st_size
-                <= 0
+                not Path(temporary_output).exists()
+                or Path(temporary_output).stat().st_size <= 0
             ):
                 raise ProcessingError(
                     "O FFmpeg não produziu um vídeo de saída válido."
                 )
 
-            rendered_metadata = (
-                self.tools.probe(
-                    temporary_output,
-                    cancel=cancel,
-                )
+            rendered_metadata = self.tools.probe(
+                temporary_output,
+                cancel=cancel,
             )
             if (
-                rendered_metadata[
-                    "container"
-                ][
-                    "duration_seconds"
-                ]
+                rendered_metadata["container"]["duration_seconds"]
                 in (None, 0)
             ):
                 raise ProcessingError(
@@ -655,9 +624,5 @@ class FFmpegRenderer:
             return destination
 
         finally:
-            Path(script_path).unlink(
-                missing_ok=True
-            )
-            Path(temporary_output).unlink(
-                missing_ok=True
-            )
+            Path(script_path).unlink(missing_ok=True)
+            Path(temporary_output).unlink(missing_ok=True)
