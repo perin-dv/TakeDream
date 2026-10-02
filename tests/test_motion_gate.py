@@ -1,5 +1,6 @@
 import unittest
 
+from core.batch_visual_analysis import BatchVisualAnalysisPipeline
 from core.wedding_assembly import _window
 from media.motion_analyzer import profile_scene_motion
 
@@ -59,6 +60,57 @@ class MotionGateTests(unittest.TestCase):
         self.assertEqual(profile["classification"], "continuous_motion")
         self.assertEqual(profile["trim_start_ms"], 0)
         self.assertEqual(profile["trim_end_ms"], 0)
+
+    def test_batch_candidate_receives_motion_safe_bounds(self):
+        target = []
+        asset = {
+            "id": "asset-a",
+            "path": "a.mp4",
+            "filename": "a.mp4",
+            "category_hint": "casal",
+            "audio_present": True,
+        }
+        visual = {
+            "scenes": [
+                {
+                    "id": 3,
+                    "start_ms": 1000,
+                    "end_ms": 5000,
+                    "duration_ms": 4000,
+                    "quality": {
+                        "score": 84.0,
+                        "label": "excelente",
+                        "sampled": True,
+                    },
+                }
+            ]
+        }
+        motion = {
+            "scenes": [
+                {
+                    "scene_id": 3,
+                    "classification": "exit_whip",
+                    "confidence": 0.8,
+                    "safe_start_ms": 1000,
+                    "safe_end_ms": 4400,
+                    "trim_start_ms": 0,
+                    "trim_end_ms": 600,
+                    "median_motion": 2.4,
+                    "peak_motion": 18.0,
+                }
+            ]
+        }
+
+        BatchVisualAnalysisPipeline._collect_candidates(
+            target,
+            asset,
+            visual,
+            motion_result=motion,
+        )
+        self.assertEqual(len(target), 1)
+        self.assertEqual(target[0]["motion_classification"], "exit_whip")
+        self.assertEqual(target[0]["motion_safe_end_ms"], 4400)
+        self.assertEqual(target[0]["motion_trim_end_ms"], 600)
 
     def test_window_never_reintroduces_trimmed_whip(self):
         candidate = {
