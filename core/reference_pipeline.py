@@ -25,7 +25,7 @@ def _fingerprint(path):
 
 
 class ReferenceAnalysisPipeline:
-    """Extracts editing rhythm + audio-energy structure from a reference video."""
+    """Extract editing rhythm + audio-energy structure from a reference video."""
 
     def __init__(self, manager=None, tools=None):
         self.manager = manager or ProjectManager()
@@ -64,9 +64,10 @@ class ReferenceAnalysisPipeline:
                 isinstance(manifest, dict)
                 and manifest.get("fingerprint") == fingerprint
                 and isinstance(cached_style, dict)
+                and cached_style.get("engine") == "reference-rhythm-v2"
             ):
                 progress(100)
-                stage("Referencia ja analisada. Reutilizando DNA de edicao.")
+                stage("Referencia ja analisada. Reutilizando DNA de edicao V2.")
                 return {
                     "reference_style": cached_style,
                     "reference_music": cached_music,
@@ -85,7 +86,7 @@ class ReferenceAnalysisPipeline:
         duration_ms = int(round(duration_seconds * 1000))
 
         check_cancelled(cancel)
-        stage("Aprendendo ritmo e padrao de cortes da referencia...")
+        stage("Aprendendo ritmo, fases e padrao de cortes da referencia...")
         progress(18)
         visual = VisualAnalyzer(self.tools.ffmpeg_path)
         cut_times = visual.detect_scene_changes(
@@ -120,13 +121,14 @@ class ReferenceAnalysisPipeline:
         write_json(style_path, style_profile)
         write_json(music_path, music_profile)
         manifest = {
-            "schema_version": "0.1",
+            "schema_version": "0.2",
             "path": str(reference),
             "filename": reference.name,
             "fingerprint": fingerprint,
             "size_bytes": reference.stat().st_size,
             "style_path": REFERENCE_STYLE_PATH,
             "music_path": REFERENCE_MUSIC_PATH,
+            "reference_engine": style_profile.get("engine"),
         }
         write_json(manifest_path, manifest)
 
@@ -142,7 +144,7 @@ class ReferenceAnalysisPipeline:
         )
 
         progress(100)
-        stage("DNA da referencia pronto para o Wedding Story Builder.")
+        stage("DNA V2 da referencia pronto para o Reference Story Director.")
         return {
             "reference_style": style_profile,
             "reference_music": music_profile,
