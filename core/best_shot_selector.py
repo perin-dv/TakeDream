@@ -1,12 +1,39 @@
 from __future__ import annotations
 
 
+def _visual_quality_risk(candidate):
+    """Retorna riscos semânticos/técnicos calculados pela visão real.
+
+    Os frames do CLIP são extraídos já dentro das margens seguras do Motion Gate.
+    Portanto, um whip_score alto aqui normalmente indica que ainda existe um
+    chicote/movimento ruim *dentro* do trecho que seria usado, e não apenas numa
+    borda que já foi aparada.
+    """
+    semantics = candidate.get("visual_semantics") if isinstance(candidate, dict) else None
+    quality = semantics.get("quality") if isinstance(semantics, dict) else None
+    if not isinstance(quality, dict):
+        return 0.0, 0.0, 0.0
+
+    def value(name):
+        try:
+            return max(0.0, min(1.0, float(quality.get(name, 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    return (
+        value("whip_score"),
+        value("shake_score"),
+        value("motion_blur_score"),
+    )
+
+
 def is_usable_wedding_candidate(candidate):
     """Quality gate conservador para o primeiro corte de casamento.
 
-    O score visual atual é um sinal técnico, não um veredito semântico. Por isso
-    cenas medianas/ruins ficam no fim do ranking em vez de serem descartadas cedo
-    demais. Só rejeitamos material realmente inutilizável ou curto demais.
+    O score visual geral é apenas um sinal técnico, mas a visão semântica já
+    consegue apontar alguns defeitos que são editorialmente ruins. Chicote forte
+    dentro do trecho, tremor extremo ou motion blur extremo são rejeitados quando
+    existe essa evidência. O restante continua elegível como fallback.
     """
     if not isinstance(candidate, dict):
         return False
@@ -22,6 +49,16 @@ def is_usable_wedding_candidate(candidate):
         quality = float(candidate.get("score", 0) or 0)
     except (TypeError, ValueError):
         quality = 0.0
+
+    whip, shake, blur = _visual_quality_risk(candidate)
+    # O Motion Gate já tentou salvar as bordas. Se a própria região segura ainda
+    # parece um chicote, não vale colocar esse take no corte automático.
+    if whip >= 0.60:
+        return False
+    if shake >= 0.84:
+        return False
+    if blur >= 0.90:
+        return False
 
     label = str(candidate.get("quality_label") or "").strip().lower()
     sampled = candidate.get("quality_sampled") is True
@@ -56,8 +93,19 @@ def candidate_selection_score(candidate):
     else:
         quality_penalty = 0.0
 
+    whip, shake, blur = _visual_quality_risk(candidate)
+    # Penalização contínua antes do limite de rejeição. Isso empurra pequenos
+    # resquícios de reposicionamento/tremor para o fim do ranking sem proibir pans
+    # suaves e movimentos de gimbal que a visão considera estáveis.
+    motion_penalty = whip * 34.0 + shake * 16.0 + blur * 12.0
+
     return round(
-        quality + semantic_bonus + duration_bonus + sampled_bonus - quality_penalty,
+        quality
+        + semantic_bonus
+        + duration_bonus
+        + sampled_bonus
+        - quality_penalty
+        - motion_penalty,
         3,
     )
 
