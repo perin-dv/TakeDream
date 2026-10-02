@@ -17,25 +17,48 @@ def serialize_segment(segment):
 class FasterWhisperTranscriber:
     def __init__(self, config=None):
         self.config = config or WhisperConfig.from_env()
+        self._model = None
 
-    def transcribe(self, audio_path, *, cancel=None, stage, progress):
+    def _load_model(self, *, cancel=None, stage=lambda text: None, progress=lambda value: None):
         check_cancelled(cancel)
+        if self._model is not None:
+            return self._model
+
         config = self.config
         stage("Carregando modelo Whisper (o primeiro uso pode baixar o modelo)...")
         progress(-1)
         try:
             from faster_whisper import WhisperModel
-            model = WhisperModel(config.model, device=config.device, compute_type=config.compute_type)
+            self._model = WhisperModel(
+                config.model,
+                device=config.device,
+                compute_type=config.compute_type,
+            )
         except Exception as error:
             raise ProcessingError(
                 "Não foi possível carregar ou baixar o modelo Whisper. Verifique a conexão, "
                 f"o espaço em disco e a configuração do modelo/dispositivo.\n{error}"
             ) from error
         check_cancelled(cancel)
+        return self._model
+
+    def transcribe(self, audio_path, *, cancel=None, stage, progress):
+        check_cancelled(cancel)
+        config = self.config
+        model = self._load_model(
+            cancel=cancel,
+            stage=stage,
+            progress=progress,
+        )
+        check_cancelled(cancel)
         stage("Transcrevendo...")
         progress(0)
         try:
-            segments, info = model.transcribe(str(audio_path), language=config.language, word_timestamps=True)
+            segments, info = model.transcribe(
+                str(audio_path),
+                language=config.language,
+                word_timestamps=True,
+            )
             saved = []
             for segment in segments:
                 check_cancelled(cancel)
@@ -45,9 +68,17 @@ class FasterWhisperTranscriber:
             check_cancelled(cancel)
             return {
                 "schema_version": "0.1",
-                "model": {"name": config.model, "device": config.device, "compute_type": config.compute_type},
-                "language": {"detected": info.language, "probability": float(info.language_probability)},
-                "text": " ".join(segment["text"] for segment in saved), "segments": saved,
+                "model": {
+                    "name": config.model,
+                    "device": config.device,
+                    "compute_type": config.compute_type,
+                },
+                "language": {
+                    "detected": info.language,
+                    "probability": float(info.language_probability),
+                },
+                "text": " ".join(segment["text"] for segment in saved),
+                "segments": saved,
             }
         except ProcessingCancelled:
             raise
