@@ -43,9 +43,36 @@ def _base_clip_ms(deliverable):
     return max(1200, int(round(average * multiplier * 1000)))
 
 
+def _safe_motion_bounds(candidate, raw_start, raw_end):
+    safe_start = candidate.get("motion_safe_start_ms")
+    safe_end = candidate.get("motion_safe_end_ms")
+
+    try:
+        safe_start = int(safe_start)
+    except (TypeError, ValueError):
+        safe_start = raw_start
+    try:
+        safe_end = int(safe_end)
+    except (TypeError, ValueError):
+        safe_end = raw_end
+
+    safe_start = max(raw_start, min(safe_start, raw_end))
+    safe_end = max(raw_start, min(safe_end, raw_end))
+
+    # Motion Gate nunca pode deixar um take inutilizável. Se os limites
+    # detectados forem agressivos demais, preservamos a cena original.
+    if safe_end - safe_start < 500:
+        return raw_start, raw_end
+    return safe_start, safe_end
+
+
 def _window(candidate, wanted_ms):
-    start = int(candidate.get("start_ms", 0) or 0)
-    end = int(candidate.get("end_ms", start) or start)
+    raw_start = int(candidate.get("start_ms", 0) or 0)
+    raw_end = int(candidate.get("end_ms", raw_start) or raw_start)
+    safe_start, safe_end = _safe_motion_bounds(candidate, raw_start, raw_end)
+
+    start = safe_start
+    end = safe_end
     available = max(0, end - start)
     wanted = max(0, min(int(wanted_ms), available))
     if wanted <= 0:
@@ -55,6 +82,10 @@ def _window(candidate, wanted_ms):
         offset = int((available - wanted) / 2)
         start += offset
         end = start + wanted
+
+    trim_start_ms = max(0, safe_start - raw_start)
+    trim_end_ms = max(0, raw_end - safe_end)
+    motion_applied = bool(trim_start_ms or trim_end_ms)
 
     return {
         "asset_id": candidate.get("asset_id"),
@@ -66,8 +97,12 @@ def _window(candidate, wanted_ms):
         "semantic_confidence": candidate.get("semantic_confidence", 0.0),
         "semantic_evidence": list(candidate.get("semantic_evidence") or []),
         "scene_id": candidate.get("scene_id"),
-        "source_start_ms": int(candidate.get("start_ms", 0) or 0),
-        "source_end_ms": int(candidate.get("end_ms", 0) or 0),
+        "raw_source_start_ms": raw_start,
+        "raw_source_end_ms": raw_end,
+        # source_* representa a área segura. Qualquer expansão posterior fica
+        # presa dentro dela e não reintroduz um chicote já removido.
+        "source_start_ms": safe_start,
+        "source_end_ms": safe_end,
         "start_ms": start,
         "end_ms": end,
         "duration_ms": end - start,
@@ -75,6 +110,14 @@ def _window(candidate, wanted_ms):
         "score": float(candidate.get("score", 0) or 0),
         "quality_label": candidate.get("quality_label"),
         "audio_present": candidate.get("audio_present"),
+        "motion_gate_applied": motion_applied,
+        "motion_classification": candidate.get("motion_classification"),
+        "motion_confidence": float(candidate.get("motion_confidence", 0.0) or 0.0),
+        "motion_trim_start_ms": trim_start_ms,
+        "motion_trim_end_ms": trim_end_ms,
+        "motion_trim_total_ms": trim_start_ms + trim_end_ms,
+        "motion_median": candidate.get("motion_median"),
+        "motion_peak": candidate.get("motion_peak"),
         "zoom_scale": 1.0,
     }
 
@@ -289,9 +332,9 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
 
     accumulated = sum(int(clip["duration_ms"]) for clip in selected)
 
-    # Se o padrão da referência pedir takes mais longos do que as cenas novas
-    # permitem, aproveita o restante disponível dos takes já escolhidos. Isso
-    # impede que um trailer de 3m30 volte a virar apenas ~27s.
+    # Depois do Motion Gate, os limites source_* já representam apenas a área
+    # segura. O preenchimento de duração pode expandir o take, mas nunca volta
+    # para uma borda marcada como chicote/reposicionamento.
     if accumulated < target_ms:
         remaining = target_ms - accumulated
         for clip in selected:
@@ -346,8 +389,19 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
                 clip["zoom_scale"] = zoom_scale
                 next_zoom_ms = clip["timeline_start_ms"] + zoom_gap_ms
 
+    motion_trimmed = [clip for clip in final_clips if clip.get("motion_gate_applied")]
+    motion_trimmed_ms = sum(
+        int(clip.get("motion_trim_total_ms", 0) or 0)
+        for clip in motion_trimmed
+    )
+    continuous_motion = sum(
+        1
+        for clip in final_clips
+        if clip.get("motion_classification") == "continuous_motion"
+    )
+
     return {
-        "schema_version": "0.4",
+        "schema_version": "0.5",
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
         "deliverable": deliverable,
@@ -362,6 +416,11 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
         "story_sections": _story_section_summary(story, final_clips),
         "classified_candidates": story.get("classified_candidates", 0),
         "unclassified_candidates": story.get("unclassified_candidates", 0),
+        "motion_gate_engine": "motion-gate-v1",
+        "motion_gate_applied": bool(motion_trimmed),
+        "motion_trimmed_clip_count": len(motion_trimmed),
+        "motion_trimmed_total_ms": motion_trimmed_ms,
+        "continuous_motion_preserved_count": continuous_motion,
         "reference_timing_applied": bool(timing_durations),
         "reference_rhythm": (
             reference_timing.get("reference_rhythm")
@@ -473,7 +532,7 @@ class WeddingAssemblyPipeline:
             write_json(root / REFERENCE_TIMING_PATH, reference_timing)
 
         check_cancelled(cancel)
-        stage("Construindo a história do casamento por capítulos...")
+        stage("Construindo a história e aplicando Motion Gate nos takes...")
         progress(45)
         library = load_media_library(root) or library
         plan = build_wedding_assembly_plan(
@@ -527,6 +586,9 @@ class WeddingAssemblyPipeline:
             wedding_story_builder=plan["story_builder"],
             wedding_story_sections=plan["story_sections"],
             wedding_source_audio_policy=plan["source_audio_policy"],
+            wedding_motion_gate=plan.get("motion_gate_engine"),
+            wedding_motion_trimmed_clip_count=plan.get("motion_trimmed_clip_count", 0),
+            wedding_motion_trimmed_total_ms=plan.get("motion_trimmed_total_ms", 0),
             reference_audio_used=False,
             reference_timing_path=(REFERENCE_TIMING_PATH if reference_timing else None),
             reference_timing_applied=plan["reference_timing_applied"],
@@ -542,15 +604,17 @@ class WeddingAssemblyPipeline:
 
         progress(100)
         shortfall = int(plan.get("duration_shortfall_ms", 0) or 0)
+        motion_count = int(plan.get("motion_trimmed_clip_count", 0) or 0)
         if shortfall > 1500:
             stage(
                 f"História pronta com {plan['clip_count']} takes. "
+                f"Motion Gate ajustou {motion_count} borda(s). "
                 f"Faltaram {shortfall / 1000:.1f}s de material utilizável para a duração alvo."
             )
         else:
             stage(
-                f"História do casamento pronta: {plan['clip_count']} takes, "
-                f"{duration_ms / 1000:.1f}s."
+                f"História pronta: {plan['clip_count']} takes, "
+                f"{duration_ms / 1000:.1f}s • Motion Gate ajustou {motion_count} take(s)."
             )
         return {
             "audio_path": None,
