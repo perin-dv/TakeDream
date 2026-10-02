@@ -55,21 +55,49 @@ def _section_profile(scenes, start_ms, end_ms):
             "scene_count": 0,
             "average_shot_seconds": 0.0,
             "median_shot_seconds": 0.0,
+            "cuts_per_minute": 0.0,
+            "rhythm": "lento",
         }
 
+    window_seconds = max(0.001, (end_ms - start_ms) / 1000.0)
+    cut_count = max(0, len(durations) - 1)
+    cuts_per_minute = cut_count * 60.0 / window_seconds
+    median_seconds = median(durations) / 1000.0
     return {
         "scene_count": len(durations),
         "average_shot_seconds": round(sum(durations) / len(durations) / 1000.0, 3),
-        "median_shot_seconds": round(median(durations) / 1000.0, 3),
+        "median_shot_seconds": round(median_seconds, 3),
+        "cuts_per_minute": round(cuts_per_minute, 3),
+        "rhythm": _rhythm_label(cuts_per_minute, median_seconds),
     }
+
+
+def _pacing_windows(scenes, duration_ms, count=12):
+    windows = []
+    count = max(4, int(count))
+    for index in range(count):
+        start = int(round(duration_ms * index / count))
+        end = int(round(duration_ms * (index + 1) / count))
+        profile = _section_profile(scenes, start, end)
+        windows.append(
+            {
+                "index": index,
+                "start_ms": start,
+                "end_ms": end,
+                "start_ratio": round(index / count, 4),
+                "end_ratio": round((index + 1) / count, 4),
+                **profile,
+            }
+        )
+    return windows
 
 
 def build_reference_style_profile(cut_times_ms, duration_ms):
     """Build a deterministic editing-rhythm profile from detected cut points.
 
-    This V1 intentionally learns timing/rhythm only. It does not claim to
-    understand people, emotions or wedding events yet; those layers are added
-    by the semantic wedding analyzers later.
+    This layer learns timing/rhythm only. Story meaning is handled separately by
+    the Reference Story Director; keeping those responsibilities separate makes
+    it explicit when the program is measuring versus inferring narrative form.
     """
     duration_ms = int(duration_ms)
     if duration_ms <= 0:
@@ -97,8 +125,8 @@ def build_reference_style_profile(cut_times_ms, duration_ms):
         sections[name]["end_ms"] = end
 
     return {
-        "schema_version": "0.1",
-        "engine": "reference-rhythm-v1",
+        "schema_version": "0.2",
+        "engine": "reference-rhythm-v2",
         "duration_ms": duration_ms,
         "scene_count": len(scenes),
         "cut_count": cuts,
@@ -111,5 +139,6 @@ def build_reference_style_profile(cut_times_ms, duration_ms):
         "longest_shot_seconds": round(max(shot_ms) / 1000.0, 3),
         "rhythm": _rhythm_label(cuts_per_minute, median_seconds),
         "sections": sections,
+        "pacing_windows": _pacing_windows(scenes, duration_ms, 12),
         "scenes": scenes,
     }
