@@ -55,37 +55,84 @@ def extract_frames(item, directory, ffmpeg_path, *, cancel=None):
     return paths, times
 
 
-def _build_record(item, result, key):
-    values = {name: max(0.0, min(1.0, float(result.get("scores", {}).get(name, 0)))) for name in TAG_PROMPTS}
-    if not all(math.isfinite(value) for value in result.get("scores", {}).values()):
-        raise ProcessingError("O modelo visual retornou scores inválidos.")
+def _record_tag_values(record):
+    values = {name: 0.0 for name in TAG_PROMPTS}
+    for tag in record.get("tags", []) if isinstance(record, dict) else []:
+        if not isinstance(tag, dict) or tag.get("name") not in values:
+            continue
+        try:
+            values[tag["name"]] = max(0.0, min(1.0, float(tag.get("score", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _refresh_technical_quality(record, item):
+    """Recalcula risco técnico inclusive para registros reutilizados do cache.
+
+    Um `entry_whip`/`exit_whip` já foi aparado pelo Motion Gate antes dos frames
+    serem enviados ao CLIP, então sua confiança antiga não deve contaminar a
+    região segura. `internal_whip`, por outro lado, não pode ser aparado e entra
+    diretamente como risco para o seletor.
+    """
+    values = _record_tag_values(record)
     motion = str(item.get("motion_classification") or "unknown")
-    confidence = float(item.get("motion_confidence", 0) or 0)
-    whip = max(values["whip_pan"], confidence if "spike" in motion or "whip" in motion else 0)
-    shake = max(values["shaky_camera"], confidence if "unstable" in motion else 0)
+    try:
+        confidence = max(0.0, min(1.0, float(item.get("motion_confidence", 0) or 0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    whip = values["whip_pan"]
+    shake = values["shaky_camera"]
+    if motion == "internal_whip":
+        whip = max(whip, confidence)
+    if motion == "unstable_preserved":
+        shake = max(shake, confidence)
+
     blur = values["motion_blur"]
     if item.get("quality_sampled") and item.get("sharpness_score") is not None:
-        blur = max(blur, 1.0 - float(item["sharpness_score"]) / 100.0)
+        try:
+            blur = max(blur, 1.0 - float(item["sharpness_score"]) / 100.0)
+        except (TypeError, ValueError):
+            pass
+
     risk = max(shake, whip, blur, values["low_value_frame"])
     couple = strongest(values, COUPLE)
     symbol = strongest(values, ("ring_detail", "holding_hands", "ceremony_exit", "bouquet_detail"))
     bad = strongest(values, BAD_ENDING)
-    opening = max(strongest(values, DETAILS + PREPARATION + ("ceremony_wide",)), couple, values["strong_opening_candidate"])
+    opening = max(
+        strongest(values, DETAILS + PREPARATION + ("ceremony_wide",)),
+        couple,
+        values["strong_opening_candidate"],
+    )
     roles = {
         "opening_score": max(0.0, opening * (1-risk) - bad * 0.35),
         "highlight_score": max(couple, values["emotional_reaction"], values["kiss"]) * (1-risk),
         "closing_score": max(0.0, max(couple, symbol) * (1-risk) - bad * 0.70),
         "hero_score": couple * (1-risk),
     }
-    return {"shot_id": f"{item.get('asset_id')}:{item.get('scene_id')}", "asset_id": item.get("asset_id"),
-            "scene_id": item.get("scene_id"), "source_file": str(item["path"]),
-            "start_ms": item["start_ms"], "end_ms": item["end_ms"], "cache_key": key,
-            "tags": [{"name":name, "score":score} for name,score in sorted(values.items(), key=lambda x:x[1], reverse=True)],
-            "quality": {"shake_score": round(shake,4), "motion_blur_score": round(blur,4), "whip_score": round(whip,4),
-                        "motion_gate_classification": motion},
-            "roles": {name:round(value,4) for name,value in roles.items()},
-            "embedding": result.get("embedding", []), "background_score": result.get("background_score", 0),
-            "resolved_revision": result.get("resolved_revision")}
+    record["quality"] = {
+        "shake_score": round(shake, 4),
+        "motion_blur_score": round(blur, 4),
+        "whip_score": round(whip, 4),
+        "motion_gate_classification": motion,
+    }
+    record["roles"] = {name: round(value, 4) for name, value in roles.items()}
+    return record
+
+
+def _build_record(item, result, key):
+    values = {name: max(0.0, min(1.0, float(result.get("scores", {}).get(name, 0)))) for name in TAG_PROMPTS}
+    if not all(math.isfinite(value) for value in result.get("scores", {}).values()):
+        raise ProcessingError("O modelo visual retornou scores inválidos.")
+    record = {"shot_id": f"{item.get('asset_id')}:{item.get('scene_id')}", "asset_id": item.get("asset_id"),
+              "scene_id": item.get("scene_id"), "source_file": str(item["path"]),
+              "start_ms": item["start_ms"], "end_ms": item["end_ms"], "cache_key": key,
+              "tags": [{"name":name, "score":score} for name,score in sorted(values.items(), key=lambda x:x[1], reverse=True)],
+              "quality": {}, "roles": {},
+              "embedding": result.get("embedding", []), "background_score": result.get("background_score", 0),
+              "resolved_revision": result.get("resolved_revision")}
+    return _refresh_technical_quality(record, item)
 
 
 class VisualSemanticsPipeline:
@@ -126,6 +173,7 @@ class VisualSemanticsPipeline:
                 record["sample_times_ms"] = times
             else:
                 reused += 1
+                record = _refresh_technical_quality(record, item)
             document["shots"].append(record)
             enriched.append({**item,"visual_semantics":record,
                              "vision_tags":[tag["name"] for tag in record["tags"] if tag["score"] >= 0.30]})
