@@ -10,6 +10,10 @@ from core.music_pipeline import MusicAnalysisPipeline
 from core.processing import ProcessingError, check_cancelled
 from core.project_manager import ProjectManager
 from core.reference_pipeline import ReferenceAnalysisPipeline
+from core.reference_story_director import (
+    arrange_candidates_by_reference,
+    build_reference_story_director,
+)
 from core.storage import read_json, write_json
 from core.wedding_story import (
     STORY_LABELS,
@@ -26,6 +30,7 @@ from renderer.multisource_renderer import MultiSourceRenderer
 WEDDING_ASSEMBLY_PLAN_PATH = "decisions/wedding_assembly_plan.json"
 WEDDING_ASSEMBLY_OUTPUT = "output/wedding_assembly_base.mp4"
 REFERENCE_TIMING_PATH = "decisions/reference_timing.json"
+REFERENCE_STORY_DIRECTOR_PATH = "decisions/reference_story_director.json"
 
 
 def _max_clips(deliverable_type):
@@ -46,7 +51,6 @@ def _base_clip_ms(deliverable):
 def _safe_motion_bounds(candidate, raw_start, raw_end):
     safe_start = candidate.get("motion_safe_start_ms")
     safe_end = candidate.get("motion_safe_end_ms")
-
     try:
         safe_start = int(safe_start)
     except (TypeError, ValueError):
@@ -58,9 +62,6 @@ def _safe_motion_bounds(candidate, raw_start, raw_end):
 
     safe_start = max(raw_start, min(safe_start, raw_end))
     safe_end = max(raw_start, min(safe_end, raw_end))
-
-    # Motion Gate nunca pode deixar um take inutilizável. Se os limites
-    # detectados forem agressivos demais, preservamos a cena original.
     if safe_end - safe_start < 500:
         return raw_start, raw_end
     return safe_start, safe_end
@@ -85,7 +86,6 @@ def _window(candidate, wanted_ms):
 
     trim_start_ms = max(0, safe_start - raw_start)
     trim_end_ms = max(0, raw_end - safe_end)
-    motion_applied = bool(trim_start_ms or trim_end_ms)
 
     return {
         "asset_id": candidate.get("asset_id"),
@@ -99,8 +99,6 @@ def _window(candidate, wanted_ms):
         "scene_id": candidate.get("scene_id"),
         "raw_source_start_ms": raw_start,
         "raw_source_end_ms": raw_end,
-        # source_* representa a área segura. Qualquer expansão posterior fica
-        # presa dentro dela e não reintroduz um chicote já removido.
         "source_start_ms": safe_start,
         "source_end_ms": safe_end,
         "start_ms": start,
@@ -110,7 +108,7 @@ def _window(candidate, wanted_ms):
         "score": float(candidate.get("score", 0) or 0),
         "quality_label": candidate.get("quality_label"),
         "audio_present": candidate.get("audio_present"),
-        "motion_gate_applied": motion_applied,
+        "motion_gate_applied": bool(trim_start_ms or trim_end_ms),
         "motion_classification": candidate.get("motion_classification"),
         "motion_confidence": float(candidate.get("motion_confidence", 0.0) or 0.0),
         "motion_trim_start_ms": trim_start_ms,
@@ -118,6 +116,11 @@ def _window(candidate, wanted_ms):
         "motion_trim_total_ms": trim_start_ms + trim_end_ms,
         "motion_median": candidate.get("motion_median"),
         "motion_peak": candidate.get("motion_peak"),
+        "director_phase": candidate.get("director_phase"),
+        "director_phase_label": candidate.get("director_phase_label"),
+        "director_target_duration_ms": candidate.get("director_target_duration_ms"),
+        "director_audio_intent": candidate.get("director_audio_intent"),
+        "director_reference_energy": candidate.get("director_reference_energy"),
         "zoom_scale": 1.0,
     }
 
@@ -128,7 +131,6 @@ def _reference_durations(reference_timing):
     shots = reference_timing.get("shots")
     if not isinstance(shots, list):
         return []
-
     values = []
     for shot in shots:
         if not isinstance(shot, dict):
@@ -145,9 +147,6 @@ def _reference_durations(reference_timing):
 def _reference_wanted_ms(timing_durations, index, fallback_ms):
     if not timing_durations:
         return fallback_ms
-    # A referência descreve um padrão de ritmo. Se o material novo precisar de
-    # mais takes para atingir a duração alvo, o padrão continua em ciclo em vez
-    # de limitar a montagem ao número de cenas da referência.
     return timing_durations[index % len(timing_durations)]
 
 
@@ -188,7 +187,6 @@ def _valid_candidates(batch_summary, library):
         if not path or type(start) is not int or type(end) is not int or end - start < 500:
             continue
         candidates.append(dict(item))
-
     return candidates or _fallback_candidates(library)
 
 
@@ -199,7 +197,6 @@ def _story_section_summary(story, final_clips):
         for item in story.get("section_stats", [])
         if isinstance(item, dict) and item.get("key")
     }
-
     actual = {}
     counts = {}
     for clip in final_clips:
@@ -238,14 +235,44 @@ def _story_section_summary(story, final_clips):
     return stats
 
 
-def _apply_source_audio_policy(clips, project):
-    """Mantém uma única trilha musical e abre áudio original só quando útil.
+def _director_phase_summary(director, final_clips):
+    if not isinstance(director, dict):
+        return []
+    totals = {}
+    counts = {}
+    for clip in final_clips:
+        key = clip.get("director_phase") or "sem_fase"
+        totals[key] = totals.get(key, 0) + int(clip.get("duration_ms", 0) or 0)
+        counts[key] = counts.get(key, 0) + 1
+    result = []
+    for phase in director.get("phases", []) or []:
+        key = phase.get("key")
+        result.append(
+            {
+                "key": key,
+                "label": phase.get("label"),
+                "budget_ms": phase.get("budget_ms", 0),
+                "actual_ms": totals.get(key, 0),
+                "clip_count": counts.get(key, 0),
+                "target_shot_ms": phase.get("target_shot_ms"),
+                "reference_energy": phase.get("reference_energy"),
+            }
+        )
+    if totals.get("chronology_fill"):
+        result.append(
+            {
+                "key": "chronology_fill",
+                "label": "Complemento cronológico",
+                "budget_ms": 0,
+                "actual_ms": totals["chronology_fill"],
+                "clip_count": counts.get("chronology_fill", 0),
+            }
+        )
+    return result
 
-    Com música escolhida pelo usuário, B-roll/cerimônia/festa não carregam o
-    som ambiente por padrão, evitando duas músicas simultâneas. Votos/falas ou
-    um take com evidência real de fala permanecem audíveis e passam a comandar
-    o ducking da trilha. Sem música externa, o áudio original continua normal.
-    """
+
+def _apply_source_audio_policy(clips, project):
+    """Só deixa a trilha abaixar quando existe evidência real de fala."""
     has_music = bool(project.get("music_source_path"))
     for clip in clips:
         if not has_music:
@@ -255,24 +282,70 @@ def _apply_source_audio_policy(clips, project):
 
         section = clip.get("story_section") or "nao_classificado"
         evidence = " ".join(
-            str(item).lower()
-            for item in (clip.get("semantic_evidence") or [])
+            str(item).lower() for item in (clip.get("semantic_evidence") or [])
         )
         has_speech_evidence = (
             "fala/transcrição" in evidence
             or "fala/transcricao" in evidence
             or section == "votos_falas"
         )
-
         if has_speech_evidence:
             clip["source_audio_gain"] = 1.0
             clip["source_audio_role"] = "dialogue"
         else:
             clip["source_audio_gain"] = 0.0
-            clip["source_audio_role"] = "music_only"
+            # Diferente de music_only: o renderer não abre ambiente de cerimônia
+            # automaticamente. Isso evita baixar a música e entregar silêncio.
+            clip["source_audio_role"] = "music_priority"
 
 
-def build_wedding_assembly_plan(project, library, batch_summary, reference_timing=None):
+def _expand_selected_clips(selected, target_ms, director_applied):
+    accumulated = sum(int(clip["duration_ms"]) for clip in selected)
+    if accumulated >= target_ms:
+        return accumulated
+
+    remaining = target_ms - accumulated
+    for clip in selected:
+        available_extra = max(0, clip["source_duration_ms"] - clip["duration_ms"])
+        if available_extra <= 0:
+            continue
+
+        if director_applied:
+            target = int(clip.get("director_target_duration_ms", 0) or clip["duration_ms"])
+            max_duration = min(
+                clip["source_duration_ms"],
+                max(clip["duration_ms"], int(target * 1.35)),
+            )
+            available_extra = min(
+                available_extra,
+                max(0, max_duration - clip["duration_ms"]),
+            )
+            if available_extra <= 0:
+                continue
+
+        extra = min(available_extra, remaining)
+        source_start = clip["source_start_ms"]
+        source_end = clip["source_end_ms"]
+        wanted = clip["duration_ms"] + extra
+        offset = max(0, int((clip["source_duration_ms"] - wanted) / 2))
+        clip["start_ms"] = source_start + offset
+        clip["end_ms"] = min(source_end, clip["start_ms"] + wanted)
+        actual_extra = (clip["end_ms"] - clip["start_ms"]) - clip["duration_ms"]
+        clip["duration_ms"] = clip["end_ms"] - clip["start_ms"]
+        accumulated += max(0, actual_extra)
+        remaining = max(0, target_ms - accumulated)
+        if remaining <= 0:
+            break
+    return accumulated
+
+
+def build_wedding_assembly_plan(
+    project,
+    library,
+    batch_summary,
+    reference_timing=None,
+    reference_story_director=None,
+):
     deliverable = project.get("deliverable")
     if not isinstance(deliverable, dict):
         deliverable = normalize_deliverable(
@@ -291,9 +364,6 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
     if not candidates:
         raise ProcessingError("Não há takes utilizáveis para montar o casamento.")
 
-    # A referência orienta o ritmo, mas não pode fazer o Story Builder acreditar
-    # que poucos takes longos bastam. Limitamos a unidade de orçamento para que
-    # existam candidatos suficientes caso as cenas reais sejam mais curtas.
     selection_clip_ms = base_clip_ms
     if timing_durations:
         reference_average = max(
@@ -313,15 +383,25 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
         base_clip_ms=selection_clip_ms,
         max_clips=max_clips,
     )
-    selected_candidates = story.get("selected_candidates", [])[:max_clips]
+
+    director_applied = isinstance(reference_story_director, dict)
+    if director_applied:
+        selected_candidates = arrange_candidates_by_reference(
+            candidates,
+            library.get("assets", []),
+            reference_story_director,
+            max_clips,
+        )
+    else:
+        selected_candidates = story.get("selected_candidates", [])[:max_clips]
 
     selected = []
     for index, candidate in enumerate(selected_candidates):
-        wanted = _reference_wanted_ms(
-            timing_durations,
-            index,
-            base_clip_ms,
-        )
+        director_target = candidate.get("director_target_duration_ms")
+        if director_target:
+            wanted = int(director_target)
+        else:
+            wanted = _reference_wanted_ms(timing_durations, index, base_clip_ms)
         duration = int(candidate.get("duration_ms", 0) or 0)
         clip = _window(candidate, min(wanted, duration))
         if clip is not None:
@@ -330,30 +410,7 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
     if not selected:
         raise ProcessingError("O Wedding Story Builder não encontrou takes suficientes.")
 
-    accumulated = sum(int(clip["duration_ms"]) for clip in selected)
-
-    # Depois do Motion Gate, os limites source_* já representam apenas a área
-    # segura. O preenchimento de duração pode expandir o take, mas nunca volta
-    # para uma borda marcada como chicote/reposicionamento.
-    if accumulated < target_ms:
-        remaining = target_ms - accumulated
-        for clip in selected:
-            available_extra = max(0, clip["source_duration_ms"] - clip["duration_ms"])
-            if available_extra <= 0:
-                continue
-            extra = min(available_extra, remaining)
-            source_start = clip["source_start_ms"]
-            source_end = clip["source_end_ms"]
-            wanted = clip["duration_ms"] + extra
-            offset = max(0, int((clip["source_duration_ms"] - wanted) / 2))
-            clip["start_ms"] = source_start + offset
-            clip["end_ms"] = min(source_end, clip["start_ms"] + wanted)
-            actual_extra = (clip["end_ms"] - clip["start_ms"]) - clip["duration_ms"]
-            clip["duration_ms"] = clip["end_ms"] - clip["start_ms"]
-            accumulated += max(0, actual_extra)
-            remaining = max(0, target_ms - accumulated)
-            if remaining <= 0:
-                break
+    _expand_selected_clips(selected, target_ms, director_applied)
 
     timeline_ms = 0
     final_clips = []
@@ -367,7 +424,6 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
             clip["end_ms"] = clip["start_ms"] + remaining
         elif remaining < 500:
             break
-
         clip["timeline_start_ms"] = timeline_ms
         timeline_ms += clip["duration_ms"]
         clip["timeline_end_ms"] = timeline_ms
@@ -391,17 +447,15 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
 
     motion_trimmed = [clip for clip in final_clips if clip.get("motion_gate_applied")]
     motion_trimmed_ms = sum(
-        int(clip.get("motion_trim_total_ms", 0) or 0)
-        for clip in motion_trimmed
+        int(clip.get("motion_trim_total_ms", 0) or 0) for clip in motion_trimmed
     )
     continuous_motion = sum(
-        1
-        for clip in final_clips
+        1 for clip in final_clips
         if clip.get("motion_classification") == "continuous_motion"
     )
 
     return {
-        "schema_version": "0.5",
+        "schema_version": "0.6",
         "profile": "Casamento",
         "style": project.get("style", "Highlight"),
         "deliverable": deliverable,
@@ -416,6 +470,18 @@ def build_wedding_assembly_plan(project, library, batch_summary, reference_timin
         "story_sections": _story_section_summary(story, final_clips),
         "classified_candidates": story.get("classified_candidates", 0),
         "unclassified_candidates": story.get("unclassified_candidates", 0),
+        "reference_story_director": (
+            reference_story_director.get("engine") if director_applied else None
+        ),
+        "reference_story_director_applied": director_applied,
+        "reference_story_phases": _director_phase_summary(
+            reference_story_director,
+            final_clips,
+        ),
+        "cold_open_applied": bool(
+            director_applied
+            and any(clip.get("director_phase") == "cold_open" for clip in final_clips)
+        ),
         "motion_gate_engine": "motion-gate-v1",
         "motion_gate_applied": bool(motion_trimmed),
         "motion_trimmed_clip_count": len(motion_trimmed),
@@ -482,12 +548,13 @@ class WeddingAssemblyPipeline:
 
         check_cancelled(cancel)
         reference_style = None
+        reference_music = None
         music_analysis = None
         reference_video = project.get("reference_video_path")
         music_source = project.get("music_source_path")
 
         if reference_video:
-            stage("Aprendendo o DNA do casamento de referência (sem usar o áudio dele)...")
+            stage("Aprendendo estrutura, ritmo e energia do casamento de referência...")
             result = ReferenceAnalysisPipeline(
                 manager=self.manager,
                 tools=self.tools,
@@ -499,9 +566,10 @@ class WeddingAssemblyPipeline:
                 progress=lambda value: progress(28 + int(max(0, min(100, value)) * 0.08)),
             )
             reference_style = result.get("reference_style")
+            reference_music = result.get("reference_music")
 
         if music_source:
-            stage("Analisando a trilha escolhida e seus pontos fortes...")
+            stage("Analisando a nova trilha e seus pontos fortes...")
             result = MusicAnalysisPipeline(
                 manager=self.manager,
                 tools=self.tools,
@@ -515,6 +583,7 @@ class WeddingAssemblyPipeline:
             music_analysis = result.get("music_analysis")
 
         reference_timing = None
+        reference_story_director = None
         if isinstance(reference_style, dict):
             deliverable = project.get("deliverable")
             if not isinstance(deliverable, dict):
@@ -524,6 +593,12 @@ class WeddingAssemblyPipeline:
                     project.get("target_duration_seconds"),
                 )
             target_ms = int(deliverable["target_seconds"]) * 1000
+            reference_story_director = build_reference_story_director(
+                reference_style,
+                reference_music,
+                target_ms,
+            )
+            write_json(root / REFERENCE_STORY_DIRECTOR_PATH, reference_story_director)
             reference_timing = map_reference_timing(
                 reference_style,
                 target_ms,
@@ -532,7 +607,7 @@ class WeddingAssemblyPipeline:
             write_json(root / REFERENCE_TIMING_PATH, reference_timing)
 
         check_cancelled(cancel)
-        stage("Construindo a história e aplicando Motion Gate nos takes...")
+        stage("Dirigindo a história pelo trailer de referência e aplicando Motion Gate...")
         progress(45)
         library = load_media_library(root) or library
         plan = build_wedding_assembly_plan(
@@ -540,6 +615,7 @@ class WeddingAssemblyPipeline:
             library,
             batch_summary,
             reference_timing=reference_timing,
+            reference_story_director=reference_story_director,
         )
         write_json(root / WEDDING_ASSEMBLY_PLAN_PATH, plan)
 
@@ -549,7 +625,7 @@ class WeddingAssemblyPipeline:
 
         stage(
             f"Montando {plan['clip_count']} takes de {plan['media_count']} mídias "
-            "na narrativa escolhida..."
+            "na estrutura aprendida da referência..."
         )
         rendered = self.renderer.render(
             plan["clips"],
@@ -589,6 +665,14 @@ class WeddingAssemblyPipeline:
             wedding_motion_gate=plan.get("motion_gate_engine"),
             wedding_motion_trimmed_clip_count=plan.get("motion_trimmed_clip_count", 0),
             wedding_motion_trimmed_total_ms=plan.get("motion_trimmed_total_ms", 0),
+            reference_story_director_path=(
+                REFERENCE_STORY_DIRECTOR_PATH if reference_story_director else None
+            ),
+            reference_story_director_applied=plan.get(
+                "reference_story_director_applied",
+                False,
+            ),
+            reference_story_phases=plan.get("reference_story_phases", []),
             reference_audio_used=False,
             reference_timing_path=(REFERENCE_TIMING_PATH if reference_timing else None),
             reference_timing_applied=plan["reference_timing_applied"],
@@ -605,16 +689,21 @@ class WeddingAssemblyPipeline:
         progress(100)
         shortfall = int(plan.get("duration_shortfall_ms", 0) or 0)
         motion_count = int(plan.get("motion_trimmed_clip_count", 0) or 0)
+        director_text = (
+            " • Story Director ativo"
+            if plan.get("reference_story_director_applied")
+            else ""
+        )
         if shortfall > 1500:
             stage(
                 f"História pronta com {plan['clip_count']} takes. "
-                f"Motion Gate ajustou {motion_count} borda(s). "
-                f"Faltaram {shortfall / 1000:.1f}s de material utilizável para a duração alvo."
+                f"Motion Gate ajustou {motion_count} borda(s){director_text}. "
+                f"Faltaram {shortfall / 1000:.1f}s para a duração alvo."
             )
         else:
             stage(
                 f"História pronta: {plan['clip_count']} takes, "
-                f"{duration_ms / 1000:.1f}s • Motion Gate ajustou {motion_count} take(s)."
+                f"{duration_ms / 1000:.1f}s{director_text}."
             )
         return {
             "audio_path": None,
@@ -632,6 +721,7 @@ class WeddingAssemblyPipeline:
             ),
             "wedding_assembly": plan,
             "reference_timing": reference_timing,
+            "reference_story_director": reference_story_director,
             "music_analysis": music_analysis,
             "review_settings": project.get("review_settings", {}),
         }
