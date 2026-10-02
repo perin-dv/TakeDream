@@ -23,6 +23,221 @@ def _even(value):
     return value if value % 2 == 0 else value - 1
 
 
+def _semantic_tag_scores(clip):
+    semantics = clip.get("visual_semantics") if isinstance(clip, dict) else None
+    tags = semantics.get("tags") if isinstance(semantics, dict) else None
+    if not isinstance(tags, list):
+        return {}
+    result = {}
+    for item in tags:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        try:
+            result[str(item["name"])] = max(
+                0.0,
+                min(1.0, float(item.get("score", 0.0) or 0.0)),
+            )
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _visual_risk(clip):
+    semantics = clip.get("visual_semantics") if isinstance(clip, dict) else None
+    quality = semantics.get("quality") if isinstance(semantics, dict) else None
+    if not isinstance(quality, dict):
+        return 0.0
+    values = []
+    for key in ("whip_score", "shake_score", "motion_blur_score"):
+        try:
+            values.append(max(0.0, min(1.0, float(quality.get(key, 0.0) or 0.0))))
+        except (TypeError, ValueError):
+            values.append(0.0)
+    return max(values, default=0.0)
+
+
+def _timeline_midpoints(clips):
+    cursor = 0
+    result = []
+    for clip in clips:
+        duration = max(0, int(clip.get("duration_ms", 0) or 0))
+        result.append(cursor + duration // 2)
+        cursor += duration
+    return result
+
+
+def _dialogue_focus_indexes(clips, audio_presence, max_focus=2):
+    """Escolhe poucos momentos emocionais para abrir o áudio original.
+
+    A visão CLIP não transcreve o que foi dito, então usamos `vows` apenas como
+    evidência visual de que o casal parece estar falando votos. Quando já existe
+    evidência explícita de diálogo do pipeline, ela recebe prioridade maior.
+    """
+    midpoints = _timeline_midpoints(clips)
+    ranked = []
+    for index, clip in enumerate(clips):
+        if index >= len(audio_presence) or not audio_presence[index]:
+            continue
+        duration = int(clip.get("duration_ms", 0) or 0)
+        if duration < 1800 or duration > 8000:
+            continue
+
+        tags = _semantic_tag_scores(clip)
+        vows = tags.get("vows", 0.0)
+        section = str(
+            clip.get("semantic_story_section")
+            or clip.get("story_section")
+            or ""
+        )
+        phase = str(clip.get("director_phase") or "")
+        role = str(clip.get("source_audio_role") or "")
+        risk = _visual_risk(clip)
+        if risk >= 0.62:
+            continue
+
+        explicit = role == "dialogue" or section == "votos_falas"
+        if not explicit and vows < 0.18:
+            continue
+
+        score = vows * 2.2
+        if explicit:
+            score += 1.1
+        if section == "votos_falas":
+            score += 0.55
+        if phase == "vows_couple":
+            score += 0.30
+        if 2600 <= duration <= 6000:
+            score += 0.18
+        score -= risk * 0.9
+        ranked.append((score, index))
+
+    ranked.sort(reverse=True)
+    selected = []
+    for _score, index in ranked:
+        if any(abs(midpoints[index] - midpoints[other]) < 28000 for other in selected):
+            continue
+        selected.append(index)
+        if len(selected) >= max(1, int(max_focus)):
+            break
+    return set(selected)
+
+
+def _slow_motion_score(clip):
+    if not isinstance(clip, dict):
+        return 0.0
+    if clip.get("ending_director_selected"):
+        return 0.0
+    if str(clip.get("source_audio_role") or "") == "dialogue":
+        return 0.0
+    section = str(
+        clip.get("semantic_story_section")
+        or clip.get("story_section")
+        or ""
+    )
+    if section == "votos_falas":
+        return 0.0
+
+    duration = int(clip.get("duration_ms", 0) or 0)
+    if duration < 1800 or duration > 7000:
+        return 0.0
+
+    tags = _semantic_tag_scores(clip)
+    if tags.get("vows", 0.0) >= 0.22:
+        return 0.0
+    hero = max(
+        tags.get("kiss", 0.0),
+        tags.get("couple_portrait", 0.0),
+        tags.get("couple_closeup", 0.0),
+        tags.get("embrace", 0.0),
+        tags.get("holding_hands", 0.0),
+        tags.get("bride_entrance", 0.0),
+        tags.get("ring_exchange", 0.0),
+        tags.get("ceremony_exit", 0.0),
+        tags.get("emotional_reaction", 0.0),
+        tags.get("hero_shot_candidate", 0.0),
+        tags.get("strong_closing_candidate", 0.0),
+    )
+    semantics = clip.get("visual_semantics")
+    roles = semantics.get("roles") if isinstance(semantics, dict) else {}
+    try:
+        hero = max(hero, float((roles or {}).get("hero_score", 0.0) or 0.0))
+        highlight = float((roles or {}).get("highlight_score", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        highlight = 0.0
+
+    risk = _visual_risk(clip)
+    if risk >= 0.42:
+        return 0.0
+    return max(0.0, hero * 1.65 + highlight * 0.55 - risk * 1.15)
+
+
+def _slow_rate_for_fps(fps):
+    try:
+        fps = float(fps)
+    except (TypeError, ValueError):
+        return 1.0
+    if fps >= 100.0:
+        return 0.50
+    if fps >= 59.0:
+        return 0.60
+    if fps >= 49.0:
+        return 0.72
+    if fps >= 47.0:
+        return 0.80
+    return 1.0
+
+
+def _select_slow_motion_rates(clips, fps_values):
+    """Marca poucos hero shots para câmera lenta sem alterar a duração final."""
+    rates = [1.0 for _ in clips]
+    if not clips:
+        return rates
+
+    max_count = 1
+    if len(clips) >= 35:
+        max_count = 2
+    if len(clips) >= 60:
+        max_count = 3
+    if len(clips) >= 95:
+        max_count = 4
+
+    midpoints = _timeline_midpoints(clips)
+    ranked = []
+    for index, clip in enumerate(clips):
+        fps = fps_values[index] if index < len(fps_values) else None
+        rate = _slow_rate_for_fps(fps)
+        if rate >= 0.999:
+            continue
+        score = _slow_motion_score(clip)
+        if score < 0.30:
+            continue
+        ranked.append((score, index, rate))
+
+    ranked.sort(reverse=True)
+    selected = []
+    for _score, index, rate in ranked:
+        if any(abs(midpoints[index] - midpoints[other]) < 18000 for other in selected):
+            continue
+        rates[index] = rate
+        selected.append(index)
+        if len(selected) >= max_count:
+            break
+    return rates
+
+
+def _input_window(clip, playback_rate):
+    """Centraliza a parte fonte usada no slow mantendo a duração da timeline."""
+    start_ms = int(clip["start_ms"])
+    output_ms = max(1, int(clip["duration_ms"]))
+    rate = max(0.40, min(1.0, float(playback_rate or 1.0)))
+    if rate >= 0.999:
+        return start_ms, output_ms
+
+    source_ms = max(250, min(output_ms, int(round(output_ms * rate))))
+    offset = max(0, (output_ms - source_ms) // 2)
+    return start_ms + offset, source_ms
+
+
 def _source_audio_gain(clip):
     try:
         gain = float(clip.get("source_audio_gain", 1.0))
@@ -32,10 +247,9 @@ def _source_audio_gain(clip):
     section = str(clip.get("story_section") or "nao_classificado")
     role = str(clip.get("source_audio_role") or "")
 
-    # Quando a montagem tem trilha externa, o WeddingAssembly marca B-roll com
-    # ganho zero. Cerimônia/final, porém, se beneficiam de um pouco de som real
-    # (ambiente, aplauso, reação) mesmo sem transcrição individual. Votos/falas
-    # continuam em primeiro plano e comandam o ducking da música.
+    # Compatibilidade com projetos antigos que usavam music_only para pequenos
+    # ambientes. O fluxo novo usa music_priority para não abaixar a música sem
+    # uma fala/reação realmente escolhida.
     if gain <= 0.001 and role == "music_only":
         if section == "cerimonia":
             gain = 0.42
@@ -55,13 +269,28 @@ class MultiSourceRenderer:
         self.last_encoder = CPU_ENCODER
         self.last_output_size = None
         self.last_music_ducking = False
+        self.last_slow_motion_count = 0
+        self.last_dialogue_focus_count = 0
 
-    def _audio_present(self, source, cache, cancel=None):
+    def _source_metadata(self, source, cache, cancel=None):
         source = str(Path(source).resolve())
         if source not in cache:
-            metadata = self.tools.probe(source, cancel=cancel)
-            cache[source] = bool(metadata.get("audio", {}).get("present"))
+            cache[source] = self.tools.probe(source, cancel=cancel)
         return cache[source]
+
+    def _audio_present(self, source, cache, cancel=None):
+        return bool(
+            self._source_metadata(source, cache, cancel)
+            .get("audio", {})
+            .get("present")
+        )
+
+    def _source_fps(self, source, cache, cancel=None):
+        value = self._source_metadata(source, cache, cancel).get("video", {}).get("fps")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _first_dimensions(self, source, cancel=None):
         metadata = self.tools.probe(source, cancel=cancel)
@@ -81,12 +310,24 @@ class MultiSourceRenderer:
         *,
         music_path=None,
         music_ducking=True,
+        slow_motion_rates=None,
+        dialogue_focus_indexes=None,
     ):
         filters = []
         labels = []
+        slow_motion_rates = slow_motion_rates or [1.0 for _ in clips]
+        dialogue_focus_indexes = set(dialogue_focus_indexes or [])
 
         for index, clip in enumerate(clips):
             zoom = float(clip.get("zoom_scale", 1.0) or 1.0)
+            rate = (
+                float(slow_motion_rates[index])
+                if index < len(slow_motion_rates)
+                else 1.0
+            )
+            rate = max(0.40, min(1.0, rate))
+            duration_s = max(0.05, int(clip["duration_ms"]) / 1000)
+
             video_filters = [
                 f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos",
                 f"crop={width}:{height}",
@@ -101,18 +342,34 @@ class MultiSourceRenderer:
                         f"crop={width}:{height}",
                     ]
                 )
+            video_filters.append("setsar=1")
+            if rate < 0.999:
+                video_filters.append(f"setpts=(PTS-STARTPTS)/{rate:.6f}")
+            else:
+                video_filters.append("setpts=PTS-STARTPTS")
             video_filters.extend(
                 [
-                    "setsar=1",
                     "fps=30",
-                    "format=yuv420p",
+                    f"trim=duration={duration_s:.6f}",
                     "setpts=PTS-STARTPTS",
+                    "format=yuv420p",
                 ]
             )
             filters.append(f"[{index}:v:0]" + ",".join(video_filters) + f"[v{index}]")
 
-            duration_s = max(0.05, int(clip["duration_ms"]) / 1000)
             gain = _source_audio_gain(clip)
+            if music_path:
+                if index in dialogue_focus_indexes:
+                    gain = max(gain, 1.05)
+                elif str(clip.get("source_audio_role") or "") == "dialogue":
+                    # Mesmo que vários takes pareçam fala, o trailer reserva só
+                    # os melhores momentos focais para não ficar liga/desliga.
+                    gain = 0.0
+            # Slow motion é B-roll emocional: deixa a trilha conduzir e evita
+            # voz/ambiente desacelerados artificialmente.
+            if rate < 0.999:
+                gain = 0.0
+
             if audio_presence[index] and gain > 0.001:
                 filters.append(
                     f"[{index}:a:0]aresample=48000,"
@@ -176,15 +433,27 @@ class MultiSourceRenderer:
 
         return ";\n".join(filters)
 
-    def _command(self, clips, graph_path, output_path, encoder_args, *, music_path=None):
+    def _command(
+        self,
+        clips,
+        graph_path,
+        output_path,
+        encoder_args,
+        *,
+        music_path=None,
+        slow_motion_rates=None,
+    ):
         command = [self.tools.ffmpeg_path, "-hide_banner", "-nostdin", "-v", "error"]
-        for clip in clips:
+        slow_motion_rates = slow_motion_rates or [1.0 for _ in clips]
+        for index, clip in enumerate(clips):
+            rate = slow_motion_rates[index] if index < len(slow_motion_rates) else 1.0
+            source_start_ms, source_duration_ms = _input_window(clip, rate)
             command.extend(
                 [
                     "-ss",
-                    _sec(clip["start_ms"]),
+                    _sec(source_start_ms),
                     "-t",
-                    _sec(clip["duration_ms"]),
+                    _sec(source_duration_ms),
                     "-i",
                     str(Path(clip["path"]).resolve()),
                 ]
@@ -260,16 +529,29 @@ class MultiSourceRenderer:
         )
         self.last_output_size = (width, height)
 
-        audio_cache = {}
+        metadata_cache = {}
         audio_presence = []
+        fps_values = []
         for clip in clips:
             known = clip.get("audio_present")
             if isinstance(known, bool):
                 audio_presence.append(known)
             else:
                 audio_presence.append(
-                    self._audio_present(clip["path"], audio_cache, cancel)
+                    self._audio_present(clip["path"], metadata_cache, cancel)
                 )
+            fps_values.append(
+                self._source_fps(clip["path"], metadata_cache, cancel)
+            )
+
+        slow_motion_rates = _select_slow_motion_rates(clips, fps_values)
+        dialogue_focus = (
+            _dialogue_focus_indexes(clips, audio_presence)
+            if resolved_music
+            else set()
+        )
+        self.last_slow_motion_count = sum(1 for rate in slow_motion_rates if rate < 0.999)
+        self.last_dialogue_focus_count = len(dialogue_focus)
 
         graph_fd, graph_name = tempfile.mkstemp(
             suffix=".ffmpeg-filter.txt",
@@ -300,11 +582,24 @@ class MultiSourceRenderer:
                     audio_settings,
                     music_path=resolved_music,
                     music_ducking=use_ducking,
+                    slow_motion_rates=slow_motion_rates,
+                    dialogue_focus_indexes=dialogue_focus,
                 ),
                 encoding="utf-8",
             )
 
         write_graph(ducking_enabled)
+
+        slow_text = (
+            f" • {self.last_slow_motion_count} slow motion(s)"
+            if self.last_slow_motion_count
+            else ""
+        )
+        voice_text = (
+            f" • {self.last_dialogue_focus_count} momento(s) de votos/voz"
+            if self.last_dialogue_focus_count
+            else ""
+        )
 
         try:
             encoder = (
@@ -314,10 +609,10 @@ class MultiSourceRenderer:
             )
             if encoder.hardware:
                 args = hardware_encoder_args(encoder, quality=20)
-                stage(f"Montando casamento com {encoder.label}...")
+                stage(f"Montando casamento com {encoder.label}{slow_text}{voice_text}...")
             else:
                 args = cpu_encoder_args(preset="veryfast", quality=20)
-                stage("Montando casamento pela CPU...")
+                stage(f"Montando casamento pela CPU{slow_text}{voice_text}...")
 
             def run_current_graph(current_args):
                 run_media_progress(
@@ -327,6 +622,7 @@ class MultiSourceRenderer:
                         temporary_output,
                         current_args,
                         music_path=resolved_music,
+                        slow_motion_rates=slow_motion_rates,
                     ),
                     duration_ms=max(1, expected_duration_ms),
                     progress=progress,
