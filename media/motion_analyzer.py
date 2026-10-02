@@ -56,11 +56,11 @@ def profile_scene_motion(
     safety_pad_ms=170,
     minimum_keep_ms=650,
 ):
-    """Detecta picos de movimento nas bordas sem punir pans contínuos.
+    """Detecta chicotes de borda e picos curtos dentro do take.
 
-    Um chicote/reposicionamento tende a aparecer como um pico curto muito acima
-    do movimento típico do próprio take. Movimento contínuo (pan, gimbal,
-    caminhada) mantém energia alta no miolo também e, por isso, é preservado.
+    Bordas ruins ainda são aparadas. Um pico curto no miolo não pode ser aparado
+    sem quebrar o take; nesse caso a cena recebe `internal_whip` para que o
+    seletor a descarte/penalize. Pans/gimbal contínuos permanecem preservados.
     """
     start_ms = int(start_ms)
     end_ms = int(end_ms)
@@ -80,6 +80,8 @@ def profile_scene_motion(
         "peak_motion": 0.0,
         "entry_peak": 0.0,
         "exit_peak": 0.0,
+        "middle_peak": 0.0,
+        "internal_spike_samples": 0,
         "safe_start_ms": start_ms,
         "safe_end_ms": end_ms,
         "trim_start_ms": 0,
@@ -108,25 +110,48 @@ def profile_scene_motion(
     exit_peak = max((float(item["motion"]) for item in exit_items), default=0.0)
     middle_values = [float(item["motion"]) for item in middle]
     middle_median = float(median(middle_values)) if middle_values else med
+    middle_p90 = _percentile(middle_values, 0.90) if middle_values else p90
+    middle_peak = max(middle_values, default=0.0)
 
-    # Limite relativo ao próprio take + piso absoluto. Isso evita classificar
-    # qualquer movimento de câmera intencional como erro.
+    # Limites relativos ao próprio take. Movimento contínuo precisa manter a
+    # energia alta por boa parte do miolo; um pico isolado é tratado diferente.
     spike_threshold = max(7.0, middle_median * 1.85 + 1.6)
-    continuous_motion = middle_median >= 7.0 and p90 <= max(peak, middle_median * 2.4)
+    continuous_motion = (
+        middle_median >= 6.5
+        and middle_p90 <= middle_median * 1.75 + 1.5
+        and middle_peak <= middle_median * 2.15 + 2.0
+    )
 
     entry_spike = entry_peak >= spike_threshold and entry_peak >= middle_median * 1.55
     exit_spike = exit_peak >= spike_threshold and exit_peak >= middle_median * 1.55
+
+    internal_threshold = max(8.0, middle_median * 1.95 + 1.8)
+    internal_high = [
+        item
+        for item in middle
+        if float(item.get("motion", 0.0) or 0.0) >= internal_threshold
+    ]
+    internal_spike = (
+        len(middle) >= 3
+        and bool(internal_high)
+        and middle_peak >= internal_threshold
+        and middle_peak >= max(8.0, middle_median * 1.65)
+        and len(internal_high) <= max(2, int(round(len(middle) * 0.24)))
+    )
 
     if continuous_motion and entry_peak <= middle_median * 1.65 and exit_peak <= middle_median * 1.65:
         classification = "continuous_motion"
         entry_spike = False
         exit_spike = False
+        internal_spike = False
     elif entry_spike and exit_spike:
         classification = "edge_whip_both"
     elif entry_spike:
         classification = "entry_whip"
     elif exit_spike:
         classification = "exit_whip"
+    elif internal_spike:
+        classification = "internal_whip"
     else:
         classification = "stable"
 
@@ -164,10 +189,14 @@ def profile_scene_motion(
         safe_end = end_ms
         classification = "unstable_preserved"
 
-    ratio = 0.0
-    if spike_threshold > 0:
-        ratio = max(entry_peak, exit_peak) / spike_threshold
-    confidence = _clamp((ratio - 1.0) / 1.4, 0.0, 1.0) if (entry_spike or exit_spike) else 0.0
+    if internal_spike and classification == "internal_whip":
+        ratio = middle_peak / max(0.001, internal_threshold)
+        confidence = _clamp((ratio - 1.0) / 1.15 + 0.35, 0.0, 1.0)
+    elif entry_spike or exit_spike:
+        ratio = max(entry_peak, exit_peak) / max(0.001, spike_threshold)
+        confidence = _clamp((ratio - 1.0) / 1.4, 0.0, 1.0)
+    else:
+        confidence = 0.0
 
     result.update(
         {
@@ -178,6 +207,8 @@ def profile_scene_motion(
             "peak_motion": round(peak, 4),
             "entry_peak": round(entry_peak, 4),
             "exit_peak": round(exit_peak, 4),
+            "middle_peak": round(middle_peak, 4),
+            "internal_spike_samples": len(internal_high),
             "safe_start_ms": int(safe_start),
             "safe_end_ms": int(safe_end),
             "trim_start_ms": max(0, int(safe_start - start_ms)),
@@ -188,11 +219,10 @@ def profile_scene_motion(
 
 
 class MotionAnalyzer:
-    """Passagem leve de movimento para Motion Gate V1.
+    """Passagem leve de movimento para Motion Gate.
 
-    Analisa o vídeo inteiro em baixa resolução e poucos FPS. O objetivo não é
-    estabilizar nem classificar câmera; é localizar picos bruscos nas bordas dos
-    takes para evitar chicotes/reposicionamentos no primeiro corte.
+    Analisa o vídeo inteiro em baixa resolução. Além das bordas, agora também
+    sinaliza picos curtos dentro do take para o seletor evitar chicotes internos.
     """
 
     def __init__(self, ffmpeg_path):
@@ -219,7 +249,7 @@ class MotionAnalyzer:
         progress(0)
 
         filters = (
-            "fps=6,"
+            "fps=8,"
             "scale=160:-2:flags=fast_bilinear,"
             "tblend=all_mode=difference,"
             "signalstats,"
@@ -255,6 +285,7 @@ class MotionAnalyzer:
         profiles = []
         trimmed = 0
         continuous = 0
+        internal_whips = 0
         for scene in scenes or []:
             try:
                 start_ms = int(scene.get("start_ms", 0) or 0)
@@ -268,18 +299,22 @@ class MotionAnalyzer:
                 trimmed += 1
             if profile.get("classification") == "continuous_motion":
                 continuous += 1
+            if profile.get("classification") == "internal_whip":
+                internal_whips += 1
 
         progress(100)
         stage(
-            f"Motion Gate: {trimmed} take(s) com borda ajustada; "
+            f"Motion Gate: {trimmed} borda(s) ajustada(s), "
+            f"{internal_whips} chicote(s) interno(s) sinalizado(s), "
             f"{continuous} movimento(s) contínuo(s) preservado(s)."
         )
         return {
-            "schema_version": "0.1",
+            "schema_version": "0.2",
             "engine": "motion-gate-v1",
-            "sample_fps": 6,
+            "sample_fps": 8,
             "sample_count": len(samples),
             "trimmed_scene_count": trimmed,
+            "internal_whip_scene_count": internal_whips,
             "continuous_motion_scene_count": continuous,
             "scenes": profiles,
         }
