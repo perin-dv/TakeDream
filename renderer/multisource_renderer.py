@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 from core.processing import ProcessingCancelled, ProcessingError, check_cancelled
+from core.wedding_dialogue_director import WeddingDialogueDirector
 from media.process import run_media_progress
 from renderer.audio import audio_filter_chain
 from renderer.formats import target_dimensions
@@ -67,12 +68,7 @@ def _timeline_midpoints(clips):
 
 
 def _dialogue_focus_indexes(clips, audio_presence, max_focus=2):
-    """Escolhe poucos momentos emocionais para abrir o áudio original.
-
-    A visão CLIP não transcreve o que foi dito, então usamos `vows` apenas como
-    evidência visual de que o casal parece estar falando votos. Quando já existe
-    evidência explícita de diálogo do pipeline, ela recebe prioridade maior.
-    """
+    """Fallback visual para voz quando o Whisper não encontra frase útil."""
     midpoints = _timeline_midpoints(clips)
     ranked = []
     for index, clip in enumerate(clips):
@@ -247,9 +243,6 @@ def _source_audio_gain(clip):
     section = str(clip.get("story_section") or "nao_classificado")
     role = str(clip.get("source_audio_role") or "")
 
-    # Compatibilidade com projetos antigos que usavam music_only para pequenos
-    # ambientes. O fluxo novo usa music_priority para não abaixar a música sem
-    # uma fala/reação realmente escolhida.
     if gain <= 0.001 and role == "music_only":
         if section == "cerimonia":
             gain = 0.42
@@ -271,6 +264,8 @@ class MultiSourceRenderer:
         self.last_music_ducking = False
         self.last_slow_motion_count = 0
         self.last_dialogue_focus_count = 0
+        self.last_dialogue_text = None
+        self.last_dialogue_director_reason = None
 
     def _source_metadata(self, source, cache, cancel=None):
         source = str(Path(source).resolve())
@@ -362,11 +357,7 @@ class MultiSourceRenderer:
                 if index in dialogue_focus_indexes:
                     gain = max(gain, 1.05)
                 elif str(clip.get("source_audio_role") or "") == "dialogue":
-                    # Mesmo que vários takes pareçam fala, o trailer reserva só
-                    # os melhores momentos focais para não ficar liga/desliga.
                     gain = 0.0
-            # Slow motion é B-roll emocional: deixa a trilha conduzir e evita
-            # voz/ambiente desacelerados artificialmente.
             if rate < 0.999:
                 gain = 0.0
 
@@ -544,12 +535,40 @@ class MultiSourceRenderer:
                 self._source_fps(clip["path"], metadata_cache, cancel)
             )
 
+        dialogue_result = None
+        dialogue_focus = set()
+        self.last_dialogue_text = None
+        self.last_dialogue_director_reason = None
+        if resolved_music:
+            try:
+                project_root = destination.parent.parent
+                dialogue_result = WeddingDialogueDirector(self.tools).apply(
+                    project_root,
+                    clips,
+                    audio_presence,
+                    cancel=cancel,
+                    stage=stage,
+                )
+            except ProcessingCancelled:
+                raise
+            except Exception as error:
+                dialogue_result = {
+                    "selected_index": None,
+                    "reason": "director_error",
+                    "error": str(error),
+                }
+
+            self.last_dialogue_director_reason = dialogue_result.get("reason")
+            self.last_dialogue_text = dialogue_result.get("dialogue_text")
+            selected_index = dialogue_result.get("selected_index")
+            if isinstance(selected_index, int) and 0 <= selected_index < len(clips):
+                dialogue_focus = {selected_index}
+            else:
+                dialogue_focus = _dialogue_focus_indexes(clips, audio_presence)
+
+        # O diretor de voz roda primeiro. Assim um take escolhido para votos nunca
+        # é transformado em slow motion, e os dois efeitos não brigam pelo áudio.
         slow_motion_rates = _select_slow_motion_rates(clips, fps_values)
-        dialogue_focus = (
-            _dialogue_focus_indexes(clips, audio_presence)
-            if resolved_music
-            else set()
-        )
         self.last_slow_motion_count = sum(1 for rate in slow_motion_rates if rate < 0.999)
         self.last_dialogue_focus_count = len(dialogue_focus)
 
