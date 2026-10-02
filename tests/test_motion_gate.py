@@ -61,6 +61,26 @@ class MotionGateTests(unittest.TestCase):
         self.assertEqual(profile["trim_start_ms"], 0)
         self.assertEqual(profile["trim_end_ms"], 0)
 
+    def test_short_middle_spike_is_marked_as_internal_whip(self):
+        samples = [
+            {"time_ms": 0, "motion": 2.4},
+            {"time_ms": 400, "motion": 2.5},
+            {"time_ms": 800, "motion": 2.6},
+            {"time_ms": 1100, "motion": 2.4},
+            {"time_ms": 1400, "motion": 17.0},
+            {"time_ms": 1700, "motion": 2.5},
+            {"time_ms": 2000, "motion": 2.6},
+            {"time_ms": 2400, "motion": 2.4},
+            {"time_ms": 2800, "motion": 2.5},
+            {"time_ms": 3200, "motion": 2.4},
+        ]
+        profile = profile_scene_motion(samples, 0, 3200)
+        self.assertEqual(profile["classification"], "internal_whip")
+        self.assertGreater(profile["confidence"], 0.0)
+        self.assertEqual(profile["trim_start_ms"], 0)
+        self.assertEqual(profile["trim_end_ms"], 0)
+        self.assertEqual(profile["internal_spike_samples"], 1)
+
     def test_batch_candidate_receives_motion_safe_bounds(self):
         target = []
         asset = {
