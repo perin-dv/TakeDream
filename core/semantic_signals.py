@@ -54,7 +54,15 @@ def slot_score(candidate, slot):
     roles = (candidate.get("visual_semantics") or {}).get("roles") or {}
     if role:
         support = max(support, float(roles.get(role, 0) or 0))
-    penalty = quality_risk(candidate) * 0.65
+
+    risk = quality_risk(candidate)
+    # Um take pode ser semanticamente perfeito (beijo, entrada, casal), mas se a
+    # região segura ainda contém chicote/tremor/blur forte ele não deve dominar
+    # um slot só porque o assunto é bom. Acima deste limite sai do pool semântico.
+    if risk >= 0.60:
+        return -1.0
+
+    penalty = risk * 0.90
     if slot in ("opening", "closing"):
         penalty += strongest(values, BAD_ENDING) * 0.65
     return support - penalty
