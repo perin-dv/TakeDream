@@ -2,6 +2,7 @@ import unittest
 
 from core.best_shot_selector import (
     candidate_selection_score,
+    is_usable_wedding_candidate,
     per_asset_limit,
     rank_wedding_candidates,
     source_too_close,
@@ -31,6 +32,37 @@ class BestShotSelectorTests(unittest.TestCase):
         )
         ranked = rank_wedding_candidates([plain, strong_semantic])
         self.assertEqual(ranked[0]["asset_id"], "a")
+
+    def test_ground_or_reposition_composition_is_rejected(self):
+        candidate = {
+            "asset_id": "floor",
+            "score": 92,
+            "duration_ms": 3200,
+            "quality_label": "excelente",
+            "quality_sampled": True,
+            "visual_semantics": {
+                "quality": {
+                    "whip_score": 0.08,
+                    "shake_score": 0.12,
+                    "motion_blur_score": 0.10,
+                    "composition_risk_score": 0.78,
+                    "accidental_floor_score": 0.78,
+                }
+            },
+        }
+        self.assertFalse(is_usable_wedding_candidate(candidate))
+
+    def test_internal_whip_is_rejected_even_when_frame_is_sharp(self):
+        candidate = {
+            "asset_id": "whip",
+            "score": 94,
+            "duration_ms": 4000,
+            "quality_label": "excelente",
+            "quality_sampled": True,
+            "motion_classification": "internal_whip",
+            "motion_confidence": 0.72,
+        }
+        self.assertFalse(is_usable_wedding_candidate(candidate))
 
     def test_nearby_scenes_from_same_source_are_considered_too_close(self):
         candidate = {
