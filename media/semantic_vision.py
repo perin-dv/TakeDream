@@ -44,6 +44,10 @@ TAG_PROMPTS = {
     "whip_pan": "a streaked wedding video frame during a fast camera pan",
     "motion_blur": "a blurry smeared wedding video frame",
     "low_value_frame": "an empty obstructed dark wedding video frame with no clear subject",
+    "accidental_floor": "an accidental camera shot pointed down at the floor while the camera operator is walking",
+    "accidental_ceiling": "an accidental camera shot pointed up at the ceiling while the camera is being repositioned",
+    "camera_reposition": "a camera being repositioned between intended shots with no clear subject",
+    "operator_transition": "an accidental handheld transition frame between intended wedding shots",
     "strong_closing_candidate": "a cinematic emotional final image of a bride and groom together",
     "strong_opening_candidate": "a beautifully composed cinematic establishing image of a wedding",
     "hero_shot_candidate": "a cinematic romantic portrait of a bride and groom in beautiful light",
@@ -59,13 +63,21 @@ class CLIPVisionModel:
     def __init__(self, name=None, device=None, revision=None):
         self.name = name or os.getenv("TAKEDREAM_VISION_MODEL", DEFAULT_MODEL)
         self.device = device or os.getenv("TAKEDREAM_VISION_DEVICE", "cpu")
-        self.revision = revision or os.getenv("TAKEDREAM_VISION_REVISION", DEFAULT_REVISION if self.name == DEFAULT_MODEL else "main")
+        self.revision = revision or os.getenv(
+            "TAKEDREAM_VISION_REVISION",
+            DEFAULT_REVISION if self.name == DEFAULT_MODEL else "main",
+        )
         self._model = None
 
     @property
     def identity(self):
-        return {"name": self.name, "device": self.device, "revision": self.revision,
-                "backend": "transformers-clip", "scoring": "relative-softmax-v1"}
+        return {
+            "name": self.name,
+            "device": self.device,
+            "revision": self.revision,
+            "backend": "transformers-clip",
+            "scoring": "relative-softmax-v2-per-frame-peak",
+        }
 
     def _load(self):
         if self._model is not None:
@@ -74,29 +86,52 @@ class CLIPVisionModel:
             import torch
             from transformers import CLIPModel, CLIPProcessor
         except ImportError as error:
-            raise ProcessingError("Visão semântica requer requirements-vision.txt. Instale as dependências de visão local.") from error
+            raise ProcessingError(
+                "Visão semântica requer requirements-vision.txt. "
+                "Instale as dependências de visão local."
+            ) from error
         try:
             self._torch = torch
             if self.device == "cpu":
                 torch.set_num_threads(max(1, min(4, os.cpu_count() or 1)))
             options = {"revision": self.revision, "trust_remote_code": False}
-            self._processor = CLIPProcessor.from_pretrained(self.name, use_fast=False, **options)
+            self._processor = CLIPProcessor.from_pretrained(
+                self.name,
+                use_fast=False,
+                **options,
+            )
             model = CLIPModel.from_pretrained(self.name, **options).to(self.device).eval()
-            prompts = [f"A photo of {text}." for text in TAG_PROMPTS.values()] + list(BACKGROUND_PROMPTS)
-            tokens = self._processor(text=prompts, return_tensors="pt", padding=True).to(self.device)
+            prompts = [f"A photo of {text}." for text in TAG_PROMPTS.values()] + list(
+                BACKGROUND_PROMPTS
+            )
+            tokens = self._processor(
+                text=prompts,
+                return_tensors="pt",
+                padding=True,
+            ).to(self.device)
             with torch.inference_mode():
                 features = model.get_text_features(**tokens)
                 self._text = features / features.norm(dim=-1, keepdim=True)
             self._resolved_revision = getattr(model.config, "_commit_hash", None)
             self._model = model
         except Exception as error:
-            raise ProcessingError(f"Não foi possível carregar o modelo visual {self.name} em {self.device}: {error}") from error
+            raise ProcessingError(
+                f"Não foi possível carregar o modelo visual {self.name} "
+                f"em {self.device}: {error}"
+            ) from error
+
+    @staticmethod
+    def _score_from_support(support, cosine):
+        score = min(1.0, float(support) * 8.0)
+        score *= max(0.0, min(1.0, (float(cosine) - 0.12) / 0.12))
+        return round(score, 4)
 
     def analyze(self, frame_paths, *, cancel=None):
         check_cancelled(cancel)
         self._load()
         check_cancelled(cancel)
         from PIL import Image
+
         images = []
         try:
             for path in frame_paths:
@@ -108,21 +143,34 @@ class CLIPVisionModel:
                 features = features / features.norm(dim=-1, keepdim=True)
                 similarities = features @ self._text.T
                 # Relative support among prompts. It is NOT a calibrated probability.
-                support = (similarities * 30.0).softmax(dim=-1).mean(dim=0)
+                frame_support = (similarities * 30.0).softmax(dim=-1)
+                support = frame_support.mean(dim=0)
                 cosines = similarities.mean(dim=0)
                 embedding = features.mean(dim=0)
                 embedding = embedding / embedding.norm()
             check_cancelled(cancel)
+
             scores = {}
+            peak_scores = {}
             for index, tag in enumerate(TAG_PROMPTS):
-                # Scale relative support to useful [0,1] ranking strength while
-                # requiring actual positive image/text similarity.
-                score = min(1.0, float(support[index]) * 8.0)
-                score *= max(0.0, min(1.0, (float(cosines[index]) - 0.12) / 0.12))
-                scores[tag] = round(score, 4)
-            return {"scores": scores, "embedding": [round(float(x), 6) for x in embedding.cpu().tolist()],
-                    "resolved_revision": self._resolved_revision,
-                    "background_score": round(float(support[-3:].sum()), 4)}
+                scores[tag] = self._score_from_support(support[index], cosines[index])
+                frame_values = [
+                    self._score_from_support(frame_support[row, index], similarities[row, index])
+                    for row in range(similarities.shape[0])
+                ]
+                peak_scores[tag] = max(frame_values, default=0.0)
+
+            background_score = round(float(support[-len(BACKGROUND_PROMPTS):].sum()), 4)
+            return {
+                "scores": scores,
+                "peak_scores": peak_scores,
+                "embedding": [
+                    round(float(value), 6)
+                    for value in embedding.cpu().tolist()
+                ],
+                "resolved_revision": self._resolved_revision,
+                "background_score": background_score,
+            }
         finally:
             for image in images:
                 image.close()
